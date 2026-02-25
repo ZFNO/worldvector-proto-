@@ -1,0 +1,544 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>World Map + Weather Inspector</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root{
+    --ocean:#0d1b2a;--land:#e0e1dd;--border:#6c757d;--hover:#f8f9fa;--font:#f1faee;--bg:#0d1b2a;
+    --accent:#00c6ff;--grat:rgba(255,255,255,.12);
+    --panel: rgba(10, 16, 28, .78);
+    --panelBorder: rgba(255,255,255,.14);
+    --muted: rgba(255,255,255,.72);
+    --shadow: 0 18px 60px rgba(0,0,0,.45);
+  }
+  body.light{
+    --ocean:#d0e1f9;--land:#ffffff;--border:#495057;--hover:#f1faee;--font:#0d1b2a;--bg:#ffffff;
+    --accent:#0077b6;--grat:rgba(0,0,0,.14);
+    --panel: rgba(255,255,255,.86);
+    --panelBorder: rgba(0,0,0,.12);
+    --muted: rgba(0,0,0,.68);
+    --shadow: 0 18px 60px rgba(0,0,0,.18);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;height:100vh;background:var(--bg);color:var(--font);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;display:flex;flex-direction:column;}
+  header{flex:none;display:flex;justify-content:space-between;align-items:center;padding:.6rem 1rem;gap:1rem}
+  #controls{display:flex;align-items:center;gap:.6rem;flex:none}
+  #hint{font-size:.75rem;opacity:.7;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  button{border:none;background:transparent;color:var(--font);padding:.35rem .45rem;border-radius:8px;cursor:pointer;transition:background .2s, transform .05s;}
+  button:hover{background:rgba(127,127,127,.22);}
+  button:active{transform:translateY(1px)}
+  button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  #reset svg{width:1.1rem;height:1.1rem;pointer-events:none;}
+
+  #map-wrap{flex:1; min-height:0; position:relative;}
+  #map-wrap svg{width:100%;height:100%;display:block;background:var(--ocean);}
+
+  .country{stroke:var(--border);stroke-width:.3;fill:var(--land);cursor:pointer;transition:fill .18s}
+  .country.active{filter:drop-shadow(0 0 7px color-mix(in srgb, var(--accent) 86%, transparent));}
+  .country:hover{fill:var(--hover)}
+  .graticule{fill:none;stroke:var(--grat);stroke-width:.4}
+
+  #tooltip{position:fixed;padding:.35rem .6rem;background:rgba(0,0,0,.78);color:#fff;border-radius:8px;font-size:.8rem;pointer-events:none;opacity:0;transition:opacity .12s}
+
+  #status{position:absolute;left:-10000px;width:1px;height:1px;overflow:hidden;}
+
+  /* Inspector panel */
+  #panelOverlay{
+    position:fixed; inset:0;
+    background:rgba(0,0,0,.25);
+    opacity:0; pointer-events:none;
+    transition:opacity .18s;
+  }
+  body.light #panelOverlay{background:rgba(0,0,0,.18)}
+  #panelOverlay.open{opacity:1; pointer-events:auto;}
+  #inspector{
+    position:fixed; top:0; right:0; height:100%;
+    width:min(420px, 92vw);
+    background:var(--panel);
+    border-left:1px solid var(--panelBorder);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    box-shadow: var(--shadow);
+    transform: translateX(102%);
+    transition: transform .22s ease;
+    display:flex; flex-direction:column;
+  }
+  #inspector.open{transform:translateX(0)}
+  .panelHead{
+    padding:1rem 1rem .75rem 1rem;
+    border-bottom:1px solid var(--panelBorder);
+    display:flex; align-items:flex-start; gap:.75rem;
+  }
+  .panelTitle{min-width:0; flex:1;}
+  .panelTitle h2{margin:0;font-size:1.02rem;letter-spacing:.01em}
+  .panelTitle p{margin:.18rem 0 0 0;font-size:.82rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .panelClose{flex:none}
+
+  .badge{
+    display:inline-flex; align-items:center; gap:.45rem;
+    padding:.25rem .5rem;border-radius:999px;
+    border:1px solid var(--panelBorder);
+    background: color-mix(in srgb, var(--panel) 70%, transparent);
+    font-size:.78rem;color:var(--muted);
+  }
+  .panelBody{padding:1rem; overflow:auto; flex:1; }
+  .grid{
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:.75rem;
+  }
+  .card{
+    border:1px solid var(--panelBorder);
+    border-radius:14px;
+    padding:.75rem .8rem;
+    background: color-mix(in srgb, var(--panel) 76%, transparent);
+  }
+  .cardLabel{font-size:.72rem;color:var(--muted);letter-spacing:.06em;text-transform:uppercase}
+  .cardValue{margin-top:.25rem;font-size:1.15rem;font-weight:650}
+  .cardSub{margin-top:.15rem;font-size:.8rem;color:var(--muted)}
+  .bigTemp{font-size:2.2rem;font-weight:760;line-height:1}
+  .row{display:flex;align-items:center;justify-content:space-between;gap:.75rem}
+  .muted{color:var(--muted)}
+  .divider{height:1px;background:var(--panelBorder);margin:1rem 0}
+  .sectionTitle{font-size:.8rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:0 0 .6rem 0}
+  .chartWrap{border:1px solid var(--panelBorder);border-radius:14px;padding:.6rem;background:color-mix(in srgb, var(--panel) 76%, transparent);}
+  .chartMeta{display:flex;justify-content:space-between;gap:1rem;color:var(--muted);font-size:.78rem;margin-bottom:.4rem}
+  .sparkAxis{stroke: var(--panelBorder); stroke-width:1}
+  .sparkLine{fill:none;stroke: var(--accent); stroke-width:2}
+  .sparkArea{fill: color-mix(in srgb, var(--accent) 22%, transparent); }
+  .dot{fill: var(--accent); }
+  .loading{
+    position:relative;
+    overflow:hidden;
+  }
+  .loading:after{
+    content:"";
+    position:absolute; inset:0;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,.12), transparent);
+    transform: translateX(-100%);
+    animation: shimmer 1.2s infinite;
+  }
+  @keyframes shimmer { 100% { transform: translateX(100%); } }
+
+  @media (prefers-reduced-motion: reduce){
+    *{transition:none !important; animation:none !important}
+  }
+
+  @media print{
+    body,body.light{--ocean:#fff;--land:#fff;--border:#000;--font:#000}
+    button,#hint,#panelOverlay,#inspector{display:none}
+  }
+</style>
+</head>
+<body>
+<header>
+  <div id="controls">
+    <button id="theme" aria-label="Toggle dark/light theme">🌗</button>
+    <button id="reset" aria-label="Reset zoom/pan">
+      <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+        <path d="M17.65 6.35A7.96 7.96 0 0 0 12 4a8 8 0 0 0-8 8 8 8 0 0 0 8 8c3.73 0 6.86-2.55 7.76-6h-2.12A5.98 5.98 0 0 1 12 18a6 6 0 0 1-6-6 6 6 0 0 1 6-6c1.6 0 3.05.63 4.12 1.65L13 11h7V4l-2.35 2.35z"/>
+      </svg>
+    </button>
+  </div>
+  <span id="hint">Scroll to zoom · Drag to pan · Click a country for weather · R = reset · D = theme · Esc = close panel</span>
+</header>
+
+<div id="status" aria-live="polite"></div>
+
+<div id="map-wrap" aria-label="Interactive world map"></div>
+<div id="tooltip" role="tooltip"></div>
+
+<!-- Overlay + Inspector -->
+<div id="panelOverlay" aria-hidden="true"></div>
+<aside id="inspector" aria-label="Weather inspector panel" aria-hidden="true">
+  <div class="panelHead">
+    <div class="panelTitle">
+      <h2 id="insTitle">Weather Inspector</h2>
+      <p id="insSub" class="muted">Select a country to load current conditions</p>
+    </div>
+    <button class="panelClose" id="closePanel" aria-label="Close panel">✕</button>
+  </div>
+
+  <div class="panelBody">
+    <div class="row" style="margin-bottom:.75rem">
+      <span class="badge" id="insBadge">—</span>
+      <span class="badge" id="insUpdated">—</span>
+    </div>
+
+    <div class="card" id="heroCard">
+      <div class="row">
+        <div>
+          <div class="cardLabel">Current</div>
+          <div class="bigTemp"><span id="curTemp">—</span>°C</div>
+          <div class="cardSub"><span id="curCond">—</span></div>
+        </div>
+        <div style="text-align:right">
+          <div class="cardLabel">Feels like</div>
+          <div class="cardValue"><span id="feelsLike">—</span>°C</div>
+          <div class="cardSub"><span id="curIcon" aria-hidden="true" style="font-size:1.2rem">—</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="divider"></div>
+
+    <p class="sectionTitle">Details</p>
+    <div class="grid" id="detailGrid">
+      <div class="card"><div class="cardLabel">Wind</div><div class="cardValue"><span id="wind">—</span></div><div class="cardSub" id="windDir">—</div></div>
+      <div class="card"><div class="cardLabel">Humidity</div><div class="cardValue"><span id="humidity">—</span>%</div><div class="cardSub">Relative</div></div>
+      <div class="card"><div class="cardLabel">Sunrise</div><div class="cardValue"><span id="sunrise">—</span></div><div class="cardSub">Local time</div></div>
+      <div class="card"><div class="cardLabel">Sunset</div><div class="cardValue"><span id="sunset">—</span></div><div class="cardSub">Local time</div></div>
+    </div>
+
+    <div class="divider"></div>
+
+    <p class="sectionTitle">Next 48 hours</p>
+    <div class="chartWrap" id="chartCard">
+      <div class="chartMeta">
+        <span id="chartLeft">Temp (°C)</span>
+        <span id="chartRight" class="muted">—</span>
+      </div>
+      <svg id="tempChart" width="100%" height="140" viewBox="0 0 360 140" role="img" aria-label="48 hour temperature chart"></svg>
+    </div>
+
+    <div class="divider"></div>
+
+    <p class="sectionTitle">Daily highs & lows (7 days)</p>
+    <div class="chartWrap" id="dailyCard">
+      <div class="chartMeta">
+        <span>High / Low</span>
+        <span class="muted" id="dailyMeta">—</span>
+      </div>
+      <div id="dailyList" style="display:grid; gap:.4rem"></div>
+    </div>
+
+  </div>
+</aside>
+
+<script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+<script src="https://cdn.jsdelivr.net/npm/topojson@3"></script>
+
+<script>
+/* ===== safe storage (handles Tracking Prevention) ===== */
+const memStore = new Map();
+const safeStorage = {
+  get(key){ try { return localStorage.getItem(key); } catch { return memStore.get(key) ?? null; } },
+  set(key,val){ try { localStorage.setItem(key,val); } catch { memStore.set(key,val); } }
+};
+const $ = s => document.querySelector(s);
+
+function announce(txt){
+  const a = $('#status');
+  a.textContent = txt;
+  setTimeout(()=>a.textContent='', 1500);
+}
+
+/* ===== theme ===== */
+function applyTheme(dark){
+  document.body.classList.toggle('light', !dark);
+  safeStorage.set('prefDark', dark ? '1' : '0');
+}
+const prefDark = safeStorage.get('prefDark') !== null
+  ? safeStorage.get('prefDark') === '1'
+  : window.matchMedia('(prefers-color-scheme: dark)').matches;
+applyTheme(prefDark);
+$('#theme').onclick = () => applyTheme(!document.body.classList.contains('light'));
+
+/* ===== panel controls ===== */
+const overlay = $('#panelOverlay');
+const inspector = $('#inspector');
+const closePanelBtn = $('#closePanel');
+
+function openPanel(){
+  overlay.classList.add('open');
+  inspector.classList.add('open');
+  overlay.setAttribute('aria-hidden','false');
+  inspector.setAttribute('aria-hidden','false');
+}
+function closePanel(){
+  overlay.classList.remove('open');
+  inspector.classList.remove('open');
+  overlay.setAttribute('aria-hidden','true');
+  inspector.setAttribute('aria-hidden','true');
+}
+overlay.addEventListener('click', closePanel);
+closePanelBtn.addEventListener('click', closePanel);
+document.addEventListener('keydown', (e)=>{ if(e.key === 'Escape') closePanel(); });
+
+/* ===== map shell ===== */
+const mapWrap = document.getElementById('map-wrap');
+const tooltip = d3.select('#tooltip');
+
+const svg = d3.select('#map-wrap').append('svg');
+const g = svg.append('g');
+
+const projection = d3.geoNaturalEarth1();
+const path = d3.geoPath(projection);
+
+const zoom = d3.zoom().scaleExtent([1,12]).on('zoom', e => g.attr('transform', e.transform));
+svg.call(zoom);
+
+function resetZoom(){
+  svg.call(zoom.transform, d3.zoomIdentity);
+  announce('Reset zoom/pan');
+}
+$('#reset').onclick = resetZoom;
+
+/* ===== weather ===== */
+const weatherIconMap = {0:'☀️',1:'🌤️',2:'⛅',3:'☁️',45:'🌫️',48:'🌫️',51:'🌦️',53:'🌦️',55:'🌧️',56:'🌧️',57:'🌧️',61:'🌧️',63:'🌧️',65:'🌧️',66:'🌨️',67:'🌨️',71:'🌨️',73:'🌨️',75:'🌨️',77:'🌨️',80:'🌧️',81:'🌧️',82:'🌧️',85:'🌨️',86:'🌨️',95:'⛈️',96:'⛈️',99:'⛈️'};
+function windCompass(deg){
+  if(!Number.isFinite(deg)) return '—';
+  const dirs = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+  return dirs[Math.round(deg/22.5) % 16] + ` (${Math.round(deg)}°)`;
+}
+function fmtTimeLocal(iso){
+  if(!iso) return '—';
+  // open-meteo returns local time when timezone=auto
+  const d = new Date(iso);
+  return d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+}
+function fmtUpdated(iso){
+  if(!iso) return '—';
+  const d = new Date(iso);
+  return `Updated ${d.toLocaleString([], {weekday:'short', hour:'2-digit', minute:'2-digit'})}`;
+}
+function setLoadingState(isLoading){
+  const hero = $('#heroCard');
+  const chart = $('#chartCard');
+  const daily = $('#dailyCard');
+  [hero, chart, daily].forEach(el => el.classList.toggle('loading', isLoading));
+}
+
+/* D3 chart render */
+function renderTemp48(svgEl, times, temps){
+  const svg = d3.select(svgEl);
+  svg.selectAll('*').remove();
+
+  const W = 360, H = 140;
+  const m = {t:10,r:10,b:20,l:10};
+  const w = W - m.l - m.r;
+  const h = H - m.t - m.b;
+
+  const data = times.slice(0,48).map((t,i)=>({t:new Date(t), v:temps[i]})).filter(d=>Number.isFinite(d.v));
+  if(data.length < 2){
+    svg.append('text').attr('x',12).attr('y',24).attr('fill','currentColor').attr('opacity',.8).text('No chart data');
+    return;
+  }
+
+  const x = d3.scaleTime().domain(d3.extent(data,d=>d.t)).range([m.l, m.l+w]);
+  const y = d3.scaleLinear().domain(d3.extent(data,d=>d.v)).nice().range([m.t+h, m.t]);
+
+  const area = d3.area().x(d=>x(d.t)).y0(m.t+h).y1(d=>y(d.v)).curve(d3.curveMonotoneX);
+  const line = d3.line().x(d=>x(d.t)).y(d=>y(d.v)).curve(d3.curveMonotoneX);
+
+  svg.append('path').datum(data).attr('class','sparkArea').attr('d', area);
+  svg.append('path').datum(data).attr('class','sparkLine').attr('d', line);
+
+  // min/max markers
+  const min = data.reduce((a,b)=>b.v<a.v?b:a, data[0]);
+  const max = data.reduce((a,b)=>b.v>a.v?b:a, data[0]);
+
+  svg.append('circle').attr('class','dot').attr('cx',x(min.t)).attr('cy',y(min.v)).attr('r',3);
+  svg.append('circle').attr('class','dot').attr('cx',x(max.t)).attr('cy',y(max.v)).attr('r',3);
+
+  // bottom axis line
+  svg.append('line').attr('class','sparkAxis').attr('x1',m.l).attr('x2',m.l+w).attr('y1',m.t+h).attr('y2',m.t+h);
+
+  // labels
+  svg.append('text').attr('x', x(min.t)).attr('y', y(min.v)-8).attr('text-anchor','middle')
+    .attr('fill','currentColor').attr('opacity',.8).attr('font-size','10')
+    .text(`${Math.round(min.v)}°`);
+  svg.append('text').attr('x', x(max.t)).attr('y', y(max.v)-8).attr('text-anchor','middle')
+    .attr('fill','currentColor').attr('opacity',.8).attr('font-size','10')
+    .text(`${Math.round(max.v)}°`);
+}
+
+function renderDailyList(container, days){
+  // days: [{date, tmax, tmin}]
+  container.innerHTML = '';
+  if(!days || !days.length){
+    container.innerHTML = `<div class="muted" style="font-size:.85rem">No daily data</div>`;
+    return;
+  }
+
+  for(const d of days){
+    const row = document.createElement('div');
+    row.className = 'card';
+    row.style.padding = '.55rem .7rem';
+    row.innerHTML = `
+      <div class="row">
+        <div style="min-width:0">
+          <div class="cardLabel" style="text-transform:none;letter-spacing:0">${new Date(d.date).toLocaleDateString([], {weekday:'short', month:'short', day:'numeric'})}</div>
+          <div class="cardSub">High / Low</div>
+        </div>
+        <div style="text-align:right">
+          <div class="cardValue" style="font-size:1rem"><span style="color:var(--accent)">${Math.round(d.tmax)}°</span> / ${Math.round(d.tmin)}°</div>
+        </div>
+      </div>`;
+    container.appendChild(row);
+  }
+}
+
+async function fetchWeather(lat, lon, placeLabel){
+  openPanel();
+  setLoadingState(true);
+  $('#insTitle').textContent = placeLabel || 'Selected location';
+  $('#insSub').textContent = `Lat ${lat.toFixed(2)}, Lon ${lon.toFixed(2)}`;
+  $('#insBadge').textContent = 'Loading…';
+  $('#insUpdated').textContent = '—';
+
+  // Use current + hourly + daily. timezone=auto gives local times for sunrise/sunset.
+  const url =
+    `https://api.open-meteo.com/v1/forecast` +
+    `?latitude=${encodeURIComponent(lat)}` +
+    `&longitude=${encodeURIComponent(lon)}` +
+    `&current=temperature_2m,apparent_temperature,relative_humidity_2m,weathercode,wind_speed_10m,wind_direction_10m` +
+    `&hourly=temperature_2m` +
+    `&daily=temperature_2m_max,temperature_2m_min,sunrise,sunset` +
+    `&timezone=auto&forecast_days=7`;
+
+  try{
+    const res = await fetch(url, {cache:'no-store'});
+    if(!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+
+    const cur = data.current || {};
+    const icon = weatherIconMap[cur.weathercode] || '—';
+
+    $('#curTemp').textContent = Number.isFinite(cur.temperature_2m) ? Math.round(cur.temperature_2m) : '—';
+    $('#feelsLike').textContent = Number.isFinite(cur.apparent_temperature) ? Math.round(cur.apparent_temperature) : '—';
+    $('#humidity').textContent = Number.isFinite(cur.relative_humidity_2m) ? Math.round(cur.relative_humidity_2m) : '—';
+    $('#wind').textContent = Number.isFinite(cur.wind_speed_10m) ? `${Math.round(cur.wind_speed_10m)} km/h` : '—';
+    $('#windDir').textContent = windCompass(cur.wind_direction_10m);
+    $('#curIcon').textContent = icon;
+    $('#curCond').textContent = `Code ${Number.isFinite(cur.weathercode) ? cur.weathercode : '—'}`;
+    $('#insBadge').textContent = `Open‑Meteo · ${icon}`;
+    $('#insUpdated').textContent = fmtUpdated(cur.time);
+
+    // sunrise/sunset (today)
+    const sunrise = data?.daily?.sunrise?.[0];
+    const sunset  = data?.daily?.sunset?.[0];
+    $('#sunrise').textContent = fmtTimeLocal(sunrise);
+    $('#sunset').textContent  = fmtTimeLocal(sunset);
+
+    // 48h chart
+    const times = data?.hourly?.time || [];
+    const temps = data?.hourly?.temperature_2m || [];
+    renderTemp48($('#tempChart'), times, temps);
+
+    // chart right meta (min/max next 48)
+    const t48 = temps.slice(0,48).filter(Number.isFinite);
+    if(t48.length){
+      const min = Math.min(...t48), max = Math.max(...t48);
+      $('#chartRight').textContent = `Min ${Math.round(min)}° · Max ${Math.round(max)}°`;
+    }else{
+      $('#chartRight').textContent = '—';
+    }
+
+    // daily list
+    const days = (data?.daily?.time || []).map((date, i)=>({
+      date,
+      tmax: data.daily.temperature_2m_max?.[i],
+      tmin: data.daily.temperature_2m_min?.[i]
+    })).filter(d=>Number.isFinite(d.tmax) && Number.isFinite(d.tmin));
+
+    $('#dailyMeta').textContent = days.length ? `${days.length} days` : '—';
+    renderDailyList($('#dailyList'), days);
+
+    announce('Weather loaded');
+  }catch(err){
+    $('#insBadge').textContent = 'Weather unavailable';
+    $('#insUpdated').textContent = '—';
+    $('#curTemp').textContent = '—';
+    $('#feelsLike').textContent = '—';
+    $('#humidity').textContent = '—';
+    $('#wind').textContent = '—';
+    $('#windDir').textContent = '—';
+    $('#sunrise').textContent = '—';
+    $('#sunset').textContent = '—';
+    $('#curIcon').textContent = '⚠️';
+    $('#curCond').textContent = 'Try again later';
+    d3.select('#tempChart').selectAll('*').remove();
+    $('#dailyList').innerHTML = `<div class="muted" style="font-size:.85rem">No daily data</div>`;
+    announce('Weather unavailable');
+    console.error(err);
+  }finally{
+    setLoadingState(false);
+  }
+}
+
+/* ===== layout ===== */
+function layout(){
+  const w = mapWrap.clientWidth || window.innerWidth;
+  const h = mapWrap.clientHeight || window.innerHeight;
+  svg.attr('viewBox', [0,0,w,h]);
+  projection.scale(Math.min(w, h) * 0.33).translate([w/2, h/1.7]);
+  g.selectAll('path').attr('d', path);
+}
+window.addEventListener('resize', layout);
+
+/* ===== draw ===== */
+const worldURL = 'https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json';
+
+d3.json(worldURL).then(world=>{
+  const countries = topojson.feature(world, world.objects.countries);
+
+  g.append('path')
+    .datum(d3.geoGraticule())
+    .attr('class','graticule')
+    .attr('d', path);
+
+  g.selectAll('path.country')
+    .data(countries.features)
+    .join('path')
+    .attr('class','country')
+    .attr('d', path)
+    .on('mouseover', (e,d)=>{
+      const name = d.properties.NAME || 'Unknown';
+      tooltip.html(name)
+        .style('left', (e.clientX + 10) + 'px')
+        .style('top',  (e.clientY - 22) + 'px')
+        .style('opacity', 1);
+    })
+    .on('mouseout', ()=>tooltip.style('opacity',0))
+    .on('click', function(e,d){
+      g.selectAll('path.country').classed('active', false);
+      d3.select(this).classed('active', true);
+
+      const name = d.properties.NAME || 'area';
+      announce('Selected ' + name);
+
+      const c = d3.geoCentroid(d); // [lon, lat]
+      if (Number.isFinite(c[0]) && Number.isFinite(c[1])) {
+        fetchWeather(c[1], c[0], name);
+      } else {
+        openPanel();
+        $('#insTitle').textContent = name;
+        $('#insSub').textContent = 'No centroid available for this feature.';
+      }
+    });
+
+  layout();
+
+  if (window.innerWidth < 768) {
+    const [[x0,y0],[x1,y1]] = path.bounds(countries);
+    const w = mapWrap.clientWidth || window.innerWidth;
+    const h = mapWrap.clientHeight || window.innerHeight;
+    const sc = Math.min(w/(x1-x0), h/(y1-y0)) * 0.9;
+    const tr = [(w - sc*(x0+x1))/2, (h - sc*(y0+y1))/2];
+    svg.call(zoom.transform, d3.zoomIdentity.translate(tr[0], tr[1]).scale(sc));
+  }
+}).catch(console.error);
+
+/* ===== keyboard ===== */
+document.addEventListener('keydown', e=>{
+  if(e.key.toLowerCase()==='r'){ e.preventDefault(); resetZoom(); }
+  if(e.key.toLowerCase()==='d'){ e.preventDefault(); $('#theme').click(); }
+});
+</script>
+<template>NKtA Ik z-,s)SG b 9(. hvDgP+j nlR *Ya_iuq #6^oTJU!L4FV0w 7 dME ~&Qf /@ x W82c$r HZ3% eXympO5C1Bv S nrWs3&/EL 9Ba7@p80kCIhRMKcJfy,F)bH^d O~#( 5z T!UZ_Y j-e wD$Gto VAN *iuX%2q46l.1xmQPg+uXh @ pLH 8_e Bv)lJ$y7 MZ(nrA2mkKY9&NO0#I3.^w!1/ E xWG%6azVCDR- ~ PjqF5T4 o,SiUs+ c*Qgfdt b _oHd8fb5RwNzV mq My $BD@0 3It9 nx)*E/CU+(1i#!46W%vO2 hA Z7 &X^Kg-JLYe S cj~ p u sl,FTarkGP . Q htYGF I1nv5y A 9~4JO@jC EHl w&be7TKd!NV_*c-8fXa2r R+SkLmzPoB^.U i D ,#WsZ6)x( pM %/gu 0Qq3$ *oZw!8 A1h pLfHIl#5 Cv.X)i(a@ ,yj GbFO MsPn SJq WN xK E /d _ 9D-+0eV2mTB zQg4%~ u$ 7U 3Yk^R6&r t cWx & GsI d2~6CF-,zLK ! a rY 3 S +Nu% _ p ) ^m Q JcvOZw (i8@lU4nD/y$1 7 fAB.E#5q RMPVtoeT khHbX09 g j*2_ kQscW 8pLx^ YqtIV@R#N$C1)(- eHzUhj!7gMm/F5ubZTw.Eoy%G * 9ridX 6SK 4~l,af DnB0v+3&JAOPugO!Sfk b_ qi,*h9vD/EFH&2)p~@#Z 8 Q Wa3.oUjR sVt7y-56 G+^4neTMx %(Kw1mN LlzJcrC A$YdXP0IBj#m& c9o @lY5_E* Ls .py 4 FeTZBP 1n xVz(+ gG% -!fih 7X6 Oa D3v /,~2bMk SR8Qtq$ Iwd0r)AKUW NHC^uJs PHkQz7F6q5Tr34!N@AcU%MIJX ,xW#i+ GlgeVm& n .^/y 8(9E -w fYt2Cj$ LaO_1S*hu Zvd 0oR)~DpbBKI YG-TCs!RO4l_ %ZLDp(iK,)#efq.FzgamJh~u b ^o6$ V MPn& 8Ndy j*@3Q1rt 2S 5+7/cvBw 0kW9UXAEH x3 sr7k(mZKQMvTu4AiF oE-R5 Ht!U ~bcV z28+y jGl C WJ aewNd0 B gh1*I6D/$@nP. p9LX S, #^&_%Yf)q O xZny&1VjmQ0NT /vBIxaw8g)o9tq,r R 4 LE C2 WSF7POl*Ui M+Jhb~eA D_Yd fG(#3Hz ^ ! $.c56Kus% @-pXkDm-~.^! kK M5W&3V(#QI+A@ SrYF87 t46 Es XLh2 lwT*CH1U z, eRbaZoGiO_ )P% c Jg N y vf n $pq0/j B9duxigY/bn H!DvSZ3sFx$kfR+MPW0w-tp.N6B l & 4 dG~KT% aqXLhV_2 z m71o (^#c IOA*jyJ9 e8u@ 5 CEQrU ), Dwcj p@qE NS.F A GiX #WO, Z _C0m x89IfR + ^v3n Q P t y bVku6YH()eh$~ a g1JK B U5 z d !2*%sr&/-47l MT oL_1Kd%R3jq6 mP2!YE FBX LWytN7Z8v. i4TOA-I J+ wpu& 9^0rszn l #Qgx *U k$c5bMH )C(o@D / ~a, fehGVSbw19 Wx/)A N2U E!u*e7 RV0a I3 FPQB_DfdC#q.^p(v% X LK M Tzj5JykG8mH+nlt& srg@c,YS $i4o O6Z h~- LcNs ^80)(4Ujb YJIyH7G t,uS opx 1k-K Cz/d3Ef2RgvFDPMqhm*@ai T&9Z ~w.Wer%lnB6 VO_Q#!X5+$A (, Ktm&u2@1vs MA Ffl 6Ggj y_NIEp o0rHebaJV3 ~ xY/P5z * h q%^ROnU)47XwB+8$ L !C9TckWi d.-D#QZ SeOBL ~w hkI/QS$(W.lEPz ^)jb -F9MxuC4s% V&v ,Ja!GcHR+ 7qrp6A1KZy oX_Tdni3N@m* g# YDf 20tU58M4H)N z s1 b,0/ A KQUx7kwE &h2COXo +aL_g %y v^mSWYn*~ pcDVB.@R!6 8j-3fIu#F$rePldZ 9TJi5q( tG*-D.qBRMJTj /51 f9+l2L in_ u (!~cb CE^yQPgo @S34 ze #rFU80%K hA$ IHGx 6Zkt&Yasmv) O,VdpWNX7wf~Ow#7SG Z34tH6DKqdc &09*@ B Fn TCi _ Qo LrUI1R/MYv $+,!Np^8u 2 lAV )b 5yea x%m hg.PX(j szJW k-EadG sz+4 5/urQ,) *R_y !IY -6D0b EvqlLpx2@NUM c8Kkf on(T C# JVWh1i At O 7% &3~ ^XS9Z wP.jmF$g BeH3Hb%Mjgdil W4Dewkc^fh,$z@YuA)KL X0 1I O _ 8 P5 C B TU2#Exs q- aR+oGJNp .~! & t* VFS mQ6n9r / 7y(vZAtTRLx 6(9*/OlJg0 .e8 )3Cj_^v BQY Mph qoEk5 SaNX% u @Wc#-,K7PI sifm H4w!rDZV~Uz &1 d$nGb2 yF+OM*VDK@ j8 N/_ ,Phde %9x4m y &wUpL+~ Yc(kF#b1anrGWq tI3Al^Bo. 26-T svf)C!RZ u JXi05S H7$ z E gQKdo^4%9#kulit@FD OS.!3Lg6f-ms RcPJU+&)Nr 5b7$Zw V1HMp xe8Bva~ GX ECAy z I 2 q*Q/T jhn_Y 0 ,(WU!0^ )6+J/2kgb8wD &o Ka Bym,Xjt _Cr l-S3fAh7. iF9 4 1qsY@EHMpQv$ Pe (NcL x dI~RVn#*G 5 WZ%TOzuNsi mV1 8r%7 ^KYHg wfFy &c@ ,ez To_dW .B)nPZMb+-J q(aS *I6l$GhCk92RxtpE3Q D X5/ Ou~#Uvj0L4!AZJ0/cylF5 GvE+)RSCBq#4h7 wP n &p(erXi,dtNY2VO*b%I$K sgMD9 U-a Wk^T 6 QAox._f@~Lu8H31j!zmJ%h^T/niB#1VO v k Npdq3A xQa4(o _e*5jy M.7W!@m, fFL&PI2bKYRr0cCu8 $GwzHUs +t6EX) SZg ~D 9- lg @WHe. wJX D# zkv/E!Kdfhj& 6_3yNn(* c+5T2lrb%R q im0ZB,4^8A1 FxP o-Qp C VSY s t~9UuIG)M $7LaO)49x,Nn(v AI GFV BYg8i C d7 r5RP_+jmEctsk3ufep -~& Q JD. 1/WbMzL*yaUwK lX@h0%q6$H# oSO^2! ZTIZ )8dHT1mYgi b*lxPy7NX (pOt4Ga650v9C rL&.Qcs@~R%^q!Jj B / A , knzMoh2 K_+Se3u-# U$ wDV fWFEoC *_8W&ZeO, Mh$Q4dtz N.!2G pJ^- HbXgBU1~%x6KT yI@rnvj9aLm/Vk7DwR sAui5( S#)3Pqc l0F+f EYv&B1r +MFW e J UgO )mIhPY6Ek3 L sX^y!(%9qc-dHiG $SpnN@2~*KV#w , T4Q /AR 8D 0b zl ._xatf5 Cj uZ7o@fWOZhoi A kt ~yNwv qFpmV8M375 DLI6JETxsG (, B1X%)r cC!u R9/Ygj le -*Q&$_P nH+^dbSU #.zaK 204 a9H vu &Noxh%_TCI! )8rwYE 0s417J A #qt3c@ ^iel ZMG $*p.-yU /QXVKB+dPOg~DWSk2, b 6Rn(Lf mFzj 5e/ !tNl_n@%r k x4f q3 VCIgUY E9$ iRpO (h1)v*.s8+aFbH,- G2A WMT & PJ~oXc^5#D6Z0Kw ymzdQu7jLBSh o XV x&n(* H$% ~l r.Z EP !@3fzvtmIFL7 sAG Scu#+R8CM5pg a_-wD^b ie,0/2JQKTk9O BY16)UN4yW dq j5r,o /ChfS+@s9N- d3 R DqB 8KF41( %~ k n) v # I7axMUV AZH$ T 0^b2iJ .G wW &LPpOj *ugl Xy!E6tecz_ Y mQ ~s! crDS7 +12Ca43 _h#)x wvlLA R 5UX8z@yZ /B 0ITFk9bu N% on(iY.MqJPQmOedf,p&W^t-$HKg6*VjEGUB25q-6 fb8IRvX y)0F ^Q$Vc,d(Do/~*eEu CSl_G34#9 Hh Oa1Ntk.M !g@ 7jL+n iP TxKAz&sZmpr JY%wWEX fW2/0- &ceGH ^,# *4R) bAVxN9 dP8FYJQ$wqi_a Bh1o 5gyzDM m6sI ( U Kt~7l@ +npTr.jZk%OvLS3 Cu!+ B0eu O ~ PVa9h @$x) JiL! TpmqUG XFkn2z#l4 RH%/y_b5 I d- v 3 s j*,cgNrK(C7 fW&S.^EtZM 1 YQw86o DA29/xD8 Ec s 7,zA6.aMOBX *w_Nv&nj$T0KbLZfi ~qI^rhW1)lk-m!%53pRJ(HFUe4# Gy V+gCY odu tPS @QkzZt GD ~2Ls JpwEM8aIB+ h#Xmbd0-4 U 6@ P_ j 5 V(x 3rTC*,v Sgc)o9/.eRY iF7& Q W$f ql1%H^Nn!yA uOKH6VZ n)( mQ.Y 7G*9zb M J g$+5WE03 wl 8u f!eDakr_4 hI K/U& BtyRp NLd -c~xv@ C2XP#F ojs,Tq iS1O%^A PtO/)g!TVqk+w 4zY%x@vR~bDc6hdQj-n&,#J rpoE8GN0CM7 H^y.3I K*L$ S2fZl A U i Wu_F5ma Xes(9B1b+Z7Ne *S UJ(p3g M6ylsC4&PKx,d.t)WzqL5 Du/ o8- A X_OikaY0j!~ crT Iw E@mhn 1% Q$V vBF^R f#GH 29I& T3qB/dyWs~$9Rv0V25k,GzL fN ta%b(o+.g jJY1#hDX) F@c C^_ 6OKE 7m p i4Q erZMAPSn*8 x- uUwH!lu@!LDMO67Nw, pR8 x^F% EKJr(z+bH -SndI)VU5 G0Y 9c14Qkl# . 2 h~AqBvPymWif& s*gjXCa _/et$3To ZNh3$Lu&QX6,^*~8RY#l912sG5rH4 wmS( )IbqO/0cACzE+p7gM%!vx dfT _nWyKJPe@UitkDjao. F -VBZ~z -6cBvk F.t/oUCGQ+ary*qf %10R O3 l K 4L TD7,sh9&5H ^A YN@JgXWI_Snxbj#(wZp!) VE$ 8Md u2imePyh,xU6B9$ibIv Qc- s~dgtO /_ ^T1K)37 Lel.u( MW !0zAj#pVR@+5Hf P8 2NEY D rn4oJ%C FZ X *Sqwk maG&-0~lNa mCh L e +4Yx@EZ AR#u^XyWzq&8 ,KdVH_UF /6 Q1Gv%ok2 9P!f bSij*spOct7Tw(5rJIM) $B 3. Dgn WL+9^ I* @ 1!4g6e7f&Gt~ aSoP N$ lu_8YwX KROT H-,2(#z/C5QJ%Mc 3ksEvy.jiBnm0h)UrZDpdAVx q bFY3_ j%v0RfH WZt4xT DUM &1 SG(Bn ~dQ )u I ^J* sc P6Vz#hb 7$oila w2erg pK-9 5A !m8. EC ,Fk@XONL qy + /mv hfC e&2#o9RO.sNV7QpSF$3Y ( @0/ zt-D Z *y)ub rx+6lU gM EBkaLiHjP,4Wn c_dT!GqA5Xw8 ^~ %1K JI0D9 y2WMcX,IUBsS6JZzn(vqu-1Qi!%bFN_YR$r4Ve*km/.GE8~xag +)A @K&pL5 l3hTjPfOCtow#^d H7Q/_ zN$^ 2u8+4vbT q~W#ij H 1tV c Y.JE0FeD3%*hL AG!RMoUsr9&7 gP 6 Xxf ,mZpyC)k5n lKwSIBa@-Od(j dBgZ( M S%q@$ .&e u8WQNxKVE3pwl50rT2YX H6-c R+hD,G/kPb#7^z4f Im)UJ~OitAvL_oFs9 ny aC! * 11y^4# Jg) P d aBl* +7Tp b$M-tV093znL~,e xF8 ourC/vDw I.(scN 6US2mj@f!RH & ZX _%ikOGEA Q5Y h KqWkcxsV(^nEbe BfK8 * XY_Z0dh67a), wMN&u JmH iTy z 5RO +2v9 qWFP~/tG-#rAg43 $LQ%!1 ojCIl.DS@UpT^HQ3v+M0c ~1K_wu6P,eXZ #&4 OU8!JsS%o- @$NEWqV b igm jRx 7ay 9Yz5 nLtf.I Cp/Al (2GDBd* hkr ) F Eu, gfoJ 5$iRp1Dw 6 @U d%&N O L~ #q Mesz 7ryX- mA/GY tk 082( Q bZ.^9l TCc!_+)SWn Bj*hHI3av4PxFVKg8 A~7 l%uRGq$Or kxs0NM4 C!5&mID^SZi1t 6 vP YUJ )b3Bw#L/*ep_E K adhW. +cy F oV( -XH29 j@ T,QfnzD@ aV3kjCn6O2 /u 8Zm7 _Hd c tvpFeKg+9B Y! %Gx&s0 bI~A w) E NJ.Wy MoULhq , i*R$zS54fr^1QTlX#- P (Y SOmu0It *sy3Tl+ K)5/%WzdgH(R2xLNC&Qje$kw oG46icr^fbPh,A Z!B XDvJEM p1Vnq7-_ #.U8@aF~9V$^f31OpbIa r~Eg 4 o2! *M YC # RuP cXK W) _ h6Ud B Q9ZSi7 JwH,qL@TAFk8&G0yel( 5. -t v N zjx n%s/Dm+R *4 nSvpFafdE rL#Bi O_No6xcQX%8y&e)b1/hYm q+D! J5~u$ 0wI^k sTGAZ,(tKz MUC@7-gj lW2VH.93 PBp@k5ws6r7W u_F d0HJ +a D,( b%& V-KeS*lYZGxXv.Rf4ih1 Q ToN!I CzyO t~ 82g L3)P# nEmUc^A$Mq /9 js(n!7&OHTR5w) rSZg^82 Uftpah A9I%1/ ~D-@*_CXx3 ,PY4 NEQkKc 0v.qj MGdol+VWe#LJyFzu$6im bBtfxWe !4 q7K*Xzhd,Os3Rv cEAgj p@loLG^bw(JP MN .rB I5D_ HkS~ 2 $U0u%y )a+C/1i#9 Z&F-Y nm 6QVT8J_B 3@TX.bc 9&lf 8Ysh Cq tA*7k/0L)xz+vy5%g1-$ I#(r ZW OFmKHp 42EiV~jn oe, UM ^R u6GSNQdaDPw!G-xqQok1+NS (M3r. Kz p5m! D, w4&~@V6Jy%9 )Wg aFA R e CiXv7PuI2f #$tL H Yl8 0n b_h/sUT^ EZcdj B*O - ,Ui yg0* r4#VzEo(^TXO stQ1Y BC&5$Dm26dZI la R~xbAWL _q@+v8Nwj PenK )/M.H uF!3fJ79%S pckGh 8QJ%FB+ LX_p4* bKmd.EOWCA9 ~(ec h lNIRMaykxY vz3 wG i^UqPZD0 2tn 1so5#j-!Hf,@6Tg/ r7)V&Su $r2xBu FOV.jyn* +/ikSTC m%Y @ , -W&7) ZG5N81Is _ L^$HDogeMQz 90vJ b#hA (E3 RlPd!X6q ~4Kfw Uca pt1~ 0gFH9*, &n+XhMEN3C 8ki(4A U_v)7ymsSPGdf RD.c5%Y# @jTua VOK6 2 tzZ Jp Irlq!bo$/w QxL^BW e-~rdntg1KP%-3mjyB#WR@ HzT U!0eQ5)(bp*+/u _964X$OhiCwkYsaA Z . cNfG7F,Soql VJ2IE Dv x&M8^LmzgnSNu%kF-#i OG7y8B5 f W&thI0^bJj)~Px6,l2MA _(.D+Rv aZ @dC9Xq!3Y $ s U /c1o4 LHwrQ* p TEKV ea_V824J# !yKPG,@ v k)9 qe3 NpAZ-z+ xsFnji7 Cw 0l% E Yg.5rIXMRQf^6cU uTod W*LhSb(O1D~&H/t$m B cCH.8 dVIt3&F/Z b(+5Ag!S#Ms Ql-_ vkJyj 6 ~9%XUKh$ N ue ,2YPLOnafTx wD 7*iom1R@GqE z^40B W)p r +$9GwZ^u 8 *IcV D _Q0s#WzUk.243tMo FH f( ~gelBO -EpYb im1X %Nq7v6SR@ LhCr/!5 Tda&jAKnP)xyJ , ^R%#MT$(Fc7t 9pB d6KHu fV aSmY+lx,8A4 2&eyG_53ob@iQrnOCPJ U sZg w- 1q 0IWD)j*Lhv!X kEN.~z/G A@U -iBCTZ,% FD V.o*Iza pgtN5)3!fRlJ^4 P uejy w/+H#c0Xm W82On &s$ SdK 7 _r16kLMbE( v YQ 9q x~hA ez t.U9&wp _v YQ1VT ld D $@ L, n6 R)8hB#a5 I- PEbX q7M!j H4S * GJfkNxZo~cKg 3s /uF% y0+(^WOC 2imr Rx JTU @# ~c$fjV uENKkhXPanyqS tG0W vFbB_IpQ89/Ai!C-2ZHels+,)3&L164d.7m Dz (*%5 ogMOwrY^c+ 7t/ QUEk- ( &*OJ0,DyL 5FZX$Kj3 ! qT9So@h_A6Cd iVuv1mlfbRnzY4)rIsgP a M W% ewB^px.2 #GNH ~8fV!nCL+Hk3wr) $M_o Sqm ^ #45 ZYJKz~W6 tN&yGEPXaDv .F 2(eb-81 UlgA/dixTO*R,%uQB7 Ih0 scjp@9Gr/u72@a pYgV+Bc NI#d nj 6*QE0eH fTUw^lC J3ybMis!4 $P FZxov-h.%) AK1k Dm,9LzS 8Wt&_ROq(5~X juo%KdW .p @/tk0F v Z#~(3O sUc8EmC$BlY Ta1HQ9M^fnh 7!zJ *NyD2GA_Vxr +e I &,gL5P4wbRSq-i6X)Y9a( etmB x Akp 4gh. r Q P Z ! *W,CcI d OXj _ 3f70&R ov n~+/5LVMF u @KGbDUiS E 2z6q 1)NTwsH%$ #y^8 l-JBTdCt4-7/X8w ge%yDnIxjL@FE1Z .,lcS$WmR Yv uo #^ ( G 9i _JU3N 2 ~ b 0ks6za+H AQO5q)h *r KpMV &!fP egq/ !6hBs DW jM%_xXi~C YuQ 1F L&) 4b#T0G .On^+IrmVJz P ldt ( Z$ y oSUf wc2v A 78R K@-aN5H9 ,p3 k E*ZnKRW*L Pac2g Uj l/Tk4BNu3 epzdy7v )8r ~+m@bq!,5C Vo(HY%SGD w9f 1-i0EFs_$^O #J 6. t AQM&xIXh^JMp uBYTbnD/smIvF!,Z9X _UNo-~R6k7S z lgjyx d3.&O w@Ch0 W*8 af (Ei$ 2AP+teQ)5%cK1G4 V rH#qL/fcxJL&D! *keUl (Q A IGK5O-4Rdj @oN0XbW 3_TVun 1SC w hM F yv6$%zipg 8 )ms,+YH9^BP7a#~ q2tZ.rE T$j_t2xf +A hy,~JiQ@63Z^Wr%CaF)HOd 0S XEczYM*qIpweG &5m kP lR!#7Vuo(4- .1 8Nv nL9/UsgbBDK4VuOd05M mB Aog2IKS1 Q7&UNLs!@XYf* q P9 ,p-Zl k.+t3)x% FibhzCy vR(w6 _nWTeaG~$ D#8E /^J cHj rcbAY) JF VG#7ky 436$jL 5iwu Tm ZDU8dfC0+,/(t&nz !gN^ q~S1 * EpsvoIH2B -K.@a PlO_9 WxrQRh MeX%sn _4q,GNgz~txU3%! B pm9^i&J@Z2cDC wY $ * a(QKvMA Ofk)5l6oT d- # jI1+ L 8VuRHXE/0S. WePb rFyh79 Kh~)P0v F a /_ %*r2WcCZ4 z tLO Hj 6Efudq$M (-58TAGYeVU7&Qg3.In+B,N mbSiJ #xpsy^DRo@1!wk l XvpIV w%t1q m JLe4Zl$H fbr 0Y^* FN3E( X Ws#h6B P,-u k5xd/)@+z D CU8 T~2A Kj 9c_yo!. i RGO7aS&gQMnz b0KY8nd56rAL TFMq^@f%, V2N a E!*e -+lsH)~u (4OP m h/gyQ3_c7 CGBIt $Z1v.Rkwo9xUS# XJDW&pjimP%Y&z,B. M * )N 2U0 Ol eGV^EAj4 aC ! @ g dwnX1bZr-9J3QvcI(xHkL6hSF ~5_$D7oytqf / s iR pTKW+ u#8x5 Gw Y0P9cVQ C!jy2F T6Z t JWD,7ob X AEk$ 1 +Ma(egI _uN qrf3@n%4)z~ *UOlmKB8 &R.^ hiSpHLsv/#- d %2vfC YA97*SPn~ Lk8c(gJ /. iHOwQ&bp yER!aW+utD4$^)5oMGzZ_0,sNm-Kl d 6 e IVB3Xq r1T#xjF@hUl (~ SGjv2g8oRz C0dx_K UWs4 7 OVa3 Jtm !^ y &PuLfwTr9Q EBAF 6,cne D)Nk5bi%q.1$Mh- HY /X+* pI@#Z_ iu 7JbFwKo9@WA&n~ %Rh64 pML 3HOjTPm.IVt+* kY-vx 2 !# zZ,(e50)dNB^lg UQCDy q/ S X fa8 1GcEs r$ LVb#zZp9G hoYA &dlFy3$P U 5gExu / rwKRX0,.JIc ik @q_ % B 7TMQv8~t* 2!D^-OW64CN+( j)Sf H s n1m eaXsA 9%WT*K L3 a b, H7 _-4e0wm u8/#65S .igC+RVZEjDo)pNMFf UBy x c(P r d$h2^qJk~zIG&@!n t vY lQ1O#p1 s~!*dXf0 N8F% EOriaH6w,M^/P G h39(@oUk CulyRSLKI5_TY$)2Z &j tAmx QzJ- Wec Vq7 vD.Bbg4n+h ~W@0ZY% yl1M9iVkN36Twz J5A_G^ HIq se 2j t 7XSp( a/UnvECr)xomd8Db!cug4KBPOR&$ *-# f+ FL., Q CZ! f @0by je.aqvoiJF31 PL_ MV5snh tA(8BWkXud ^UKI /m6 NDSYgERl&x7QHGT#+4rwc 2~O)-%9,*zp $ Gm7oOkWa!/P fc b4-CtU0~ X Jx^ Q1edw +LsYz. ,MF VDAgNR5h$ryT& Zlnv9 #)* 36jHEq@i Bu(2pK_ I8S%#h%3UN aP 0k*l8ims4)DJ2Hd6c z 5W~LbQ A-7vVSF +!1Y.q,&r CEtX Mg w IeRKyGof 9$(nZ BT/O x_^ju@ pJ4 ~ dxU6 Z!@z Iw +s) Tq Pu$3D a (Bk o2f,n -O9bQcl % i C .5SgYNWr&A FHR8me jK 0/EGV*7p hLt_ Xv M^1#y6q _7 ewuU-n F) l+QtLf5i Z3 M.!2y RsSK% zNk&HI*apY#A 9 O Wo08 Dxb ~/hT4$ @CVG cv,^r BjgJ1mEdP( XItLEx 4V%nJu W2d^sYNP Z_,@cjqri Ck5OB&eH 1S*Qg8Fowf byp/ Xz!0-mG U69a D.TK$+3vR7~l(hMA#)o 8@yU%f)^J0p$O ,57n(1_ MK4 6dNA gQ a e~.x Y /m l#Z-q!cB r2jVhRT G3IE*ti+&w bvSDzHkWLu9X s C F PmBCY hlx f#M r^ N knwG9d OP_D) q 0.4WZJv7Xo@& $6bj/Q%!i* uz,s1-~ 8e ap(E5RHA SF IgKV3+T2tU L c yX E^QSc@ GC#Ja* DuP)RzrhYF7M9VjWN 2nos !0_(xHtki-$BpbmvZl~IfTU8OK1/ q g35.e&y L d+4%w,A6MT5nksglv6jLKFa!,.CBW1q9Uwz0 iY &Pb)3 uV -(N *OpG _RI @yZ4$Ho~D#7e^ % JS8cxdhX Q2/EmtfAr+)y bJ%9@ BDz_6k SG5CW l m IpHQ.h UNZ d4*O 7vtoEr/sn#KA,g 0f^ 82uq- & jiF TV!R3Le 1 +aMwP (c~ X$ Yx4xWk+!P vJoMF)h/ _XTY %t8zKEAjbwp 7LnQ -UfeO#&@Bm c*a~1H2.D$iuy dZlV ^3I gNRCr50q,GS6s( 9l9Vr. f7k X%F3 Gw (_W)y^t,6z+H5JIQ in1YSUPL BN s A mb$2@aZoxq !8 c hvT&gR D4OEC ~ #-jue MdK0p/*Q!lb^YCWsV &nymdJi+ R #$ tUrjc k8~)z fKSD,G3v (x_o aALe9g 0 1*F /5 BP hq ION-@ % .w X67pZ4 HT EuM2.vpBDs/+ 5A ~ Q7f8 lJ1X tN WKg #@4zrxI_6$ycCS,&FYw !^2U oPkqZ%0aLunEG* 3RHb9j(Tm dOheVM)-i3Pf!Q1 ^rl bHdI4V%ZwO02Rc5 9ka_$s# J uS.i-*qy EKLN~jm7W@ +BD Xt C8,zo (hF 6x& vp)eUg G A /YTMnS/Uzdh iKyQ q6AM59$jG,!Ct BfuJ24a7 YeT #v(b %RZs.&cLwXO@ *mVoH1 l-W+P Igrp Ex3~kF0D 8nN _ ^)qi^AhU8 -Sp am_*Q1GP% Jt.5$/ IMEy+Yz! R0 gT~#W4oLfju F 6vn rc, B7wX@Vs()b kedlN ZDO 9 Cx KH2&3i,4bOF&ntJED )7 w C61Pu XQ0 2Ry(shq#SHg a m VvlT8 x5I !.3K@L%^ /-ZUe c Bz+ fG_d$Nj 9AMpY o~*r kW1 q eDf d!C%zuB AIT k gQP 7mHU ,ENb3(hi4-l~R .vt2Yx@W0o sS#yLOJZ6j)/Vc9 Kr*X+8 G&Fw _ 5$npMa^32D^ % 6wmS_ksWFnMJ,bVxE& izc@Q*TBO1K0.CGlt d 9R~foHNuv5Ieg ra4q8)7( #p hL- $PA+Z!U YXjy/ .24WvcrP&F 5$J,dC3 Mq /KbVOu~n N1R kUxm)-^# fsLwZiD X+ gjAye6G%* p9 _atT!hH @BSE 0 I 8YozlQ( 7,O7Z i*.)^XrBNJ L mI tT(s V! gjU$ 0pa - KW z PqGD kSyF5v+M&eRC#x 2 A / H_8f4 Qn%E~d6b3 9Y 1uhcw@lof_avHT rZyLzq6 D ~gp E7& Y(,POKiwk@9*$ FB- u +Io/R t2)x!n G M 10VsbAX %d j3lS8U c 5 4.^h WJCQN#meRUG!E(F8t 7dk/3ABOV &W0rH6L.cgy,Y Klze _jb# ZDI~% ) h*C$P@s- xaQ+pJ vfiumw2NqX ^1 4ToMS9 n5ydw mW hDt0@o ^!Ex /p %.( #OuS vY+ IT cMNQ z 4 &L 6 GUKX~q3r ijPBAf8bl7 Z- Ca$F9*_J ) RVn, gHe 5k1 2syqiewp s (lTH*oh Gfx2XP+ 1UDQdO,_VE39@!I%mC)/t#NnbA Y gr4F W~08kc6SZu vR& KB-j7ML^z5$.aJ ec *uNo!fU 3(rH1Shk_5 z4sW $CK^ wdbaF/ V t&XJI82qD)LOGP 9Y EMTAQ ipj07-Bl @.g#R+~vZ%ny m,x6)E@-Rb1% ,K A* q 7HU9yx/8!S56e Lsu Z(zNPJm 4n$. 0c v _+CwG h #g3IW fQ~ XrD2 VFY MT&^kpdtaoB Oj il/ H wq$G J g hyi N*~F)KV(udQj O M@s2r8X !Wz5De3TYEf%t6+ v _7 o^,k1 cZCbp0I&L n#lRU .PaBx A9 - 4mS )&.^s8d0PjE vhCcH+,x@ LTDetWpIYSrl J /gz2*A! o 4 y Ui 3u O_(F ZMXb5Q~- qkm$Gn 9#wNK a 7BR 6%Vf1oldA8_T59*s4!b6eKzY (~RtrHO Jf3uZVg$) 0jv,&q 2BQWhN1#LF/7GUPa wS%yXDxiI-+n^@MEckp m .C3tv5yeA@rm/P-+h d$*X,kK0 .O i D7QF % pab wq(RIMsoSN)GBc4 2Ll j9&CH#xUn18gJ uzV EWT f_^~!Y 6 ZrtWq6ug,!4(yL5 iD#Z n9G^.Sj $ Y3o 0p2 1b TvMCR&/f_BXc@ - ~ e HFhO mU+k )N zw lxIs E8Q 7 KaA*%Vd JP-/ $WkglT8^G c F aD wQ Yy s#E z6 CPSR X3 5i!oq H 4 BO* ev2V M0Z _7rNd ,Kp@(jm%Ah x +u9Uf n ).~J 1bI&Lt0f sUt-.$)@7PFCMu(_1K&vJ#rTz!* S2N^B Y I +AkEmgc Z4ne~a XQ iVDj85d/, b%6 G9RHWqw3yholLOxpVx Oei8 2L5Uu cp@ RfZ #h9AG wMa lzHd 6~oy%E/!W 7Q ^)D *Xnv& 4s1Bk-S$.Y,jK3J rNtbgC (qFT0mP+ I _L IhyY j^El$Z O-@7GW U/r .vo(DdkT !e PbQq NfpXF #uK2i* zn S9 _wVtH)A30sJg,5C~18M+Rmx6c%B & a4*8/E&1sj VuZSc%ar DlQ$F^v! )W -9tC g6O .3,qH#+ zpkobfM~R4 J 2 Iwdh GmnP_NAXK Li(y 0T xeUB75Y@C4jur-H s0l 3z$B68Id7gn5XM _ t(! 1PkETx+VZO A/ S^c K*Lv~Qf&G,om) wWpi.N@qJhYFU9Rby e%#D 2a5XV$sy x9Bm P8~Ml/ b #0+St1&z!G g-46)NWYHEjRUZ _p7^.%k ,uqd(Ahn@TOFKw 3 CDJaQocLi*rf2veI p u2 _&DHEy#BQqRI e$GkOi) gVoKW^5NL3 lr~.n(A/@7d,F%8 1+ w* a SY tJMhCUf90!6s4TzXmbZjc Pv -xt / WQo+ Zv.K) 3EDh4T^YHwf#_GgpM$ S0*Cn@6d I~ 7 esUl! %P X qzA-m(i2 OBc5kJFR xLu, b 1 aj8VN&9r yE8* .a VyKm-) reb AqXo4P%+#p$ xtg6( LJ nY7HF_~R@ !i DCk sNu0 UcGj&MW1S dvl IQ/,^z9fZOhTw 3B25h)_CQ+rW4-%A9nVjxY g owp ^.* i&yNfLcOEt6B# kM z~J7R,lX1av KdGFP$HI Ss@ /!U 8euD30T 5( m bZ2q $S4@ uKmfxg ,r07 V/^H B%dW#IMisz)_X5 G6 paN.T-13nb &ERt !e+qPo9j 8O AcQ(kvY * FUy J2lCZLDwh ~+v /43 9cBn6A Z8 25a*udX ,Y0T&@Ds!^qk7 o% UpGHJwbO- .tQF)lSIrCyKLf~mWi (x_Pe$NME1 j gVzh#RP~X ,M qw*UzT^oGRce4QDf Lx (Y7!Bg@A skvS 3O lZ6JEb. F j05+Imhup% $9/&WrC V)a2yK dn -N t_i1 H#8YVkaJX^ e% jQObCMcZ BP#xK~(N27 rU 4!6G .D_ -A/ z9I+@ 3i L hE)v*n1qpu$ osT l, y0g 5 S dmwWf R8 FHt&~@*PZSEd -b HF QRY!&cr7 f4 qK 06XalUBg%oC^Jj yn95k.I3 zW_+m,Ns8OGM/e V uxA 1pTD2) t$h iwL(#v%Fx.&TVuLy^wX0SqU~ g8bz9 W!E@52C(P#O vNR4rJ cYkiI l3n *K$Dfe pB,j_ hm )ao-Q+ tZ7G AH/1Mds6,.2SZAK7B0iFWulX Q-g4kcd+ nJ/ L$ %1Hjp#v oUY bx N !3hf w 5*~D9(qP)ea & V E _M6 y8RtsG@ mC^IOT zrVbKCMW.hoPi9xf G0 ^ L#eU &Btdl2 73vFY*g$,INQpnAJ !rS+5sa 4Zyw RD8%H 6@ _1 m)(q~kzuET/ Oc-Xj0yMzCLAX ,t$w26HORI Sd V W@vf-e+g7K!Y r~x4Gk1h#qDP Qp& 5E8TsN^)ZJca9b jiUum_3*l(n/B%.Fo#4i D_m %8W)U(3kN A FpGa ruy/XR$^dJzfP @vjK!.2I,h 0e5gn-MY+E V7 lc 1& s~CS o9ZLHBtO6* QT wbqx#Shv 2Ks/ Fa6POlCW 9_Yu40 Z b ^ (X%q1z gjIRpm-$ c@,&T MrD *neB) xGV3Ud + ~Ny7wE8 fiHokQLtJ.A!5l2hr #&V9Q E 7Cs()U gdNaD @ytmn8!5,wB~/%R PiYIFO 6z _$ * qbfoW1-^ucj4.+SxkM3v T KLpZXHAJ e0GmEB5^oXO~ a+8H7SxV,duQn b. z gtCc)lZ RN4!py1 w qDUh _@LsW v JIfkP0$j* FY %K&MT2-(/39#eAir6G_skSPg@1J TH6&UpKe25^Z x vd, Fqya 3At*or-m$ G+)~ Y9E.4OCQBc u/0 D8h7 RWlN i!( bj MV#fnIw%XzLWv N6qPxHCF c~ DV1 KA-m& + gt Z/QL dnO@ u* .f0,i7R l %#BTs!yhp k_EeI4 $X)8j95Y^z Sr2oU3Jw(GbMa$s.CN3~FijTr 9!Hk%WZAg+^G IaLo -& 265Qt @*R hOmKdxD /f41bE#B,c7nP(YJ MypS 0 v_wUuX )e lzqV8 U Z& $IA_ )Nb.s /j@ *JRu ~7%h46fp980 o1(DXzT -Vi!2Hd+FaW L# YykvMt5 gOEeKc^3xlGPCw, mBQn SqrTQbn5G,$3 C M 6kOI4VU y#9 vPef 0 S/(XE F+*l_u .cWNj !~ rpza%s Ho Z 827m &Ai@ 1RBqdt)x^hDwKg YLJ-h*D -0.f_^OsjQ ~tZwaMqzr9 K E/Yb5T1i2cnU lXx6oHI#RN P (p,8m !C3FW) kLVd vAJ%&gGB+ y $uS74e@O*WV I7YR p_sGj ( q+@i4^F!emtwUlJzg L)&QK/$~5 . Ph1 kvoB 6bdH y829#-,ZD 0TfxE% S3rc A uMX nNaC*-ISqE xp e i3f8 U ,AY&n u9cX O)+wV@4KCZPBW#Dd$kjT0%^v ~b5.!6J 7r/GLl N zM( Fy1t2osaQRHgh_ m6P4Lq+TC w AMO a_Q X#)i9N ~ &J8z t/Bp ^Y R71Fj ys VevmW-0,D@UGShK kc u% b*$ xnH(o3.ZI!lEg5frd2Er. ~+/ !tmn @ 2 cyO0Wp,) F&b1 l 5 # TBaSLed U$% YI764 Hq39k x QAfMXivw NKo R C^ z(g Z_ hP -ujsJ8GDV*e6xYoU 7HdV9 Eq$N!m,G^2~grW)0 D_a%l8v5-K#JTh@f+Z Q&s/*4MSiw tFOj(3yXucn IkR ALbB z1pP. C2HpcQ)9va0JBC o ZjL7 5$lN+ btgG8FY^X4 . rS3RVeOz-k6(d@As/qf*x#UuWnEMP!i~ID y%1&wKm_ ,hT I# b%)X$eLgvht 5!D3R Oay @_^ dx Yn z 60k/9 KW * Pp7Cso ,Q u1 fBVMA(J qmiU2&crST~8HN +.lZwFjGE-4Z6BVRX1p O+ nI5S~8J lUj (d@yL#D 3qb$r/z9Kk7C,0f ! mvH iuF)2 g_eaWT&- AE YtMcG4* N ^%os.wx Qh PNDtx Hb_3 Tw KVgu.J9j+OqW1 eFU S Ao (#0Xhdf$LI/akMYn4* B~ m 86Q@yPC2G5&pEi,Z-l 7) sv%z^R !crY-NrH,~_8Sbltn!Xq#^1G@( *xZ4UwMQz&mi 0IcD%j3RJBCWO25$sog hfAE6)9Tu7y.kdFVvLa KPep+/_Ok u FCG5fwJ jP$.Hx# Qy /he)sq n6 A1p %Tc *X(&43 RV 2!DdUlr-8tZo@az9bKEm0vYL^i 7WMIg ~N,SB+M^5c0,u6 GaTy~Onld)Wr+x8 eUPkQ!L1%@7X/#qN CmZF$-fEAg.RDH hjp4o9_zJ(ItBVw3 *YibKS2&s v j_ QwJiGzy2U dbg5V tE ,3k mlXH8NWaC#P eDup.@ o K F )& vh-(s$ S +~nxR1*^T 6LZ M 9AI/4f c!0rO%7 YqB BG1K* g&5XxjUeQ Zz.k)r ^ 7W%(6 2SAcmPhpCOH,fFa9 o l 0Mdv n-EV u TY~ys8J b/# _w DtRLI +N q!3i$ @4lo7B Hr5MD 13 ~C&R9LT G z2vxPk +cwVb^gf(-m8 # phq.na 6jFI0/dN!sQ Ki @AOuy, *Z_WY SJ$)UE4e%Xt%w 76 G+ -mgik#LfjI3*B~5eC t1c dUaQyur oP XbAK@D^M YZznF9!ph8&sRv$O,J 4 2(/WN.EH)qSlTx0_ VFYrBDR1, %/7~ OVnG0dPZcgINjqQi-z *5Ht @ bf+y82 a kT 6.W& Um3X_ L(!JeKopA x ulhv4)^ C #M9E Sw$sI~ M r jK3 U$ DQ mcs^PqV2 i(& @HLBg5/J8_E N!Ghl1 )0AbY k9 dX *wz S%n6u #RZ ovyFxt+. -W OC4T,7 fepa8pj *Q t_ SU6a1^h)eCwP%d~g 4l-X o9FOMb / ( HL # NqImVRBu5 ZJ G+!YKWxsA@knT,Ey03 2fr &vci$. 7Dz_83LFe4 2MZEoCXqv Q r l7~R1+yw(Ag W !*i p5m, V $jKG s SNB # kn.DUY-^H atOP@df09& )bI / z x cJu %h 6TfUJZ EkXvr/DMq9tQA%(y@CN uT !Bjnd se^z 3g-x K1$7oP 0Ii,.#a w ~GHWlV 8Oh +)bm5 6* p&F_Y Sc4R 2L82mA*w W QDO7g1ld4a bq 5&/FykhUSXHzr ~s P9u .i) NTRG#pC+ Mc6^xv_EoJL YjZ-Kn B!3f I(V$,e t0%@8 gm2vFc_ eJ9UqBn SQ $X fs7WVN/~4T(x1Mpdj5 )h*z0Iwi#rGak Z@+ u&DL KlOyP^ ! EYb% C3H .A,-o t R6gACb^Q -dwMn SL/t_ 8 s J!F67h BrEof 9*.( kU WO23NIjl K $ % xp)q a@ PyXH0m,vRiu+zZc~G eV5&#1 4YT DL^lc 7(.0j PiCHw %-u A@5p*/ RWEJ9! tabV+M& ZyYKdI)vGQUDS3 h q# $ TFk fn8 4ge ,rO zN ~1 sxB 6_om X2P_ ND a fr Y+ H(vzy50s Oh9d/S*2n,RF)cK!^k#~74oC.6lTg UAujB WEJZ XbiV G8%Q$qMw3L@t1- e Im&pxw v7f* #Udzm S1 t %2/CqO Ky$.PZ~XbHQF h5ju4 A s8 Nn@+cx-0I&eY^ r, oiM_l9R !k ) WL6T E3VDGgB(JapNf 7WdR )6C # bhk-9 +q V K40rw .$, pX~ QH2@ 3Y 8/D gvsG Lyje A% _n MtO!uS1I i&PF*m5cxaBJlToz^(Z E UFNcdu&+H #LE * fMBt)l4 5PD_9Ix 1@ h Gm(JR QC S a^ iz3 VK- XZ.vOo72spU/knr$0W Agw!~,Ye% y8qT bj 6Q J.#g- !v eNXiz4Tmc1 FZWI suCnVB6$Dr 9w afRpY*^)(LGKO ~S q b3k5,t0Hyh &/87 jdUEo2 Pl_M% @+A xpqZn(V t N+jA-g20XlFYs ~e 8yI. G1wWc^J$9bLM 65 K!Dx/rfm4R% &#z*) BTOv @7 E3 i Uk H_Sh ,du aPQoCzHW ,K9 f ILe 5x^ clAr0+b)6~uB!_j iYkgFG s$ DUE qt4P OvhM mX8C@nS VT/wp(&2a* Q#17N. -3Rd%JyZol d(Er t^p0S91B3Woz *- AxH V4~hqO_P2%b# UXK mRLg 7IZ$c sDyQvGM)keniJ,/ T65 fj+Y CF@!wa8N.&u !vSgecW xUqpr 34 @ a QfXY+C05Fy /MHnN_w s 6K9.JVZ~A7zI^k1E,iP&8 hT *$o2(bm)L DujGdt-%lB R#O KG J a!Q.xw/P ,8eu)s ioFR5 6+&(dhV ~qUbt %Lp ^ lnE_k7IHj9S YMONC1vX Z DgB3@y02zr#$- Tf m*WA4cSsUWbr0u,~!@(7fg* ^D#Hk5 TRFqOV+Q69).mX K3I/ $Ew&j%eapB v8GZ o tndN L2ixMy_-Clc P4h1JAYzo&2N)m~p 50 ,y B3_+%OM1lDCvf .6Fca4 QS KVZsn-GPt(w9AbJ irjH!Y 8 zdx/eIL@#gX *$qEk 7^uUWhRTiyuW -,Vs$^UEkK85G tYw Zb A._eI@o 41FO %+J Q q)6p TNP#!B fv&C/xh ca 7j3 HrDXRz0M9dn*LS2 ~l( mg /6F,H_azcqVAIS1UnY8M^x+Ze P@p4l-r mWK*RLE5OTJC j f D!bwgdi %(hG 370)$yB9vQNo~st2# &kXu.d-BXY6L7ArwkcVhJ#bF0nx) _/~$SuM1,z aU& g.^R iW+ syHv38OKTpj%f 4 eE*P (GoZl! Q2 mtN5DI@ 9Cqo T~W Gg_/C*B &Lr8 1P , $YSD i w I5d30ktx Mj evczh%^JqnNX. a ZK HE74)pFVl6(+ sfy@O9Rum Q-!2b UA # M^AV)1 j#bw !ndu$8 l-K/xzm*N qJL B_g%E65WThr Us92eo3ck +ZHCf .vY0FO 4 ~G 7R@ Qi yItS(paXD, P&+DFY)0t &(^ #2f*ropKIChGUj7uPz HSv x!/3w%m. M61y4iXg5q8 9_TNscW, On~Qla $e -kJLbV@ZEdBRA(xq $gX,m2AYS 7 3 1 d0ripG*cDLo)VJ/f^IFQaBtUZ#k&sjlH+ h958 NP.~6!4-vKb _EezCwTnOyu M%W@R2 # + spTv_z9hu.gbCe- ifO)7 Z$ jtV/PrDX n W&c,LG5x!~ dHMalQmUN *%wS 3kJByI^@qER60 4F(K18Yo A.7 + Lyo1Dn )p A64Kt~C9 P@^!xfv3 r(lIVFeWBw2kXQiudU*85-0 j ,c MRz TGbHO $EY% m_JZq&#hsSNa/g T#K3)t0WhxE-8_MeVP X 4cU l+ ~mgJkLN *d!%FS D sQ vuz7@b (q/Z &R.YCaOj 9B1o, nH wr2^iGyI$Afp 56a@i 9F(c! b8eSo~q %uvx3P)yg6HtG7.MRU*r2Z4p O _ AwQXY/kNnJ1,I5K#&B^ljs$hDLmd0+ VWTC -zfE CmG 2&uAgyJF8_Klf4HbqcQ B%Pn/ SW !i dk@ND $+U37)xVp5a^v*O XzLjst,I-E.o( Z 1eRM T Y 06 #~9h wrhcJDZxQBSsPYzl6j! .RV 7yF1nE^@G$p8/)2Uw9A&u%C+ (dTt W* H-3a ~O L4g 5X# v I_ frK, mkeqMb N0o i OM !U PY*IFt/ K4rRl(,DGC_w 1msBfn0d&W7 + VeiEH-)zSh2Qy^oqb Jg8kj X .$xu# 56NcZT 9Ap 3~%a L@ vZ a5 $gMGB TNX!Hmfple t3Q)K_CUc0 uYb ks~E/z1hPV*oIq ( v,2OJy WA#jwx dL-6F&8+D47R9@ri n.^%Sp%jb RPiL- k1gs X, + ^ YF0BT3M Vdx5vG*Hm qw fSNnt !KzAuD4@ lreQIc 7$ . JW_Z~) yho/(& 6C U8E9O2a #2 3YTglb_eiLXhk jsQH6! w() on KG Zm qNE,0.u Px7v 4A%1z5+ O8/B&Irf U^9#F*~VM y @JCD- pW$caStRdvuqSmT_ZdVcw ~*XD7)k$ f-Ei8r I 1p zx! gn3J#&ML .F 5Gl/ a B(@9Ajy Ct4oOK6W%esN 2,QH0UR b+ ^YhPH$d6YZ#Tu_ p 0RbL-i+vG 1 JOBAo5,M2I.P8g@S*VD K WnF!&mfc/ a9 kw3Q sz)j 4yXeCxNU^q~(Ert7hl%Su OJtgV ~&/ 3a C@+i*.2r15Y8W(, f Tx yFE bL_n0s7MkUHA Rcp#-9vP Dzl) m$!IQeG oX w^N4 hKj dq%ZB6i~@BW8oKJF3s/h% cryef 4UV#,!z9Y)pHwbC0(TNx1_$ MEP G2I.quX-t OQl5 +LS6 A ^k &D 7RnZmajgv *dC (mpQVkH 2h5M&^f!eo_bEFA ~ yqa 6*),8-/TwrL#JY9Us zD SlG@xP % v7$WI 3+duZj4nRN ci BKXOt01.g%!#*&SfIe) XE$F 0/ @Z7bYyMK Jsjc2w Vta8 vdWpGTh~4Pmn 6 3RUNB^51_O+- .xok9zuLHDq C,grQ(Aliz-OKlNfo k6pahR #b %q*&$3e~ I4QX ZS(Y8 ^2 MA HDJi)/u yWc _@x FP L dVjw.5CEtTn+G179B 0gvUs!r,mQh1 ~3 (U n f RX0 kDu4 W7zs@ ) V yKAmO&/Y$-_r ,cj95 I6wFP t x2qC Ha E NeZJ B dS+ MTbi pGo!gL%*l8#v^.qChltOL/ D3 ~4*51@G yo+ajcmMuH ^ )Y#R_7J6bXw,.8 &x vzg%k2Qfd-TrB( VEKUs P $pFZ9IeAS!0i Wn NiT v!u I/ jwGXU2rLd f e Aa#s+ky%SJ@4( 9H _hRQ & p -o Vz NcKWn M7ZF6O B*Y b.~DtPq,E8C^0 mlx )$ g351BCr*HG5n,_Y-O2 ey 3$aJ MDXUjK& ItkP 4g L/R ^c6F mv ~uizE b8Z )7hfo(!Tpq9@ Q Wx w 0# l % A+dS . 1 VNsk M5tNH /OV@(P1r ~EsDjC4Q* hv,fA $dcZu_#FIY7G8K3a .qx%-^g 2BLo6T)!lJ n w+&zy WbUXS ei Rm p09mc501pwORD f LK%7_93FZJ B ^#NrQ$~vSVe)b iEoy2n Hal +Wq/!( M CYG. h ukIx@,&zXTtjP86U - Ad4sg* Fsq f O mMt8*NxV^CAkYc L.+dy4z0%w 7r H2ohlTi 1Rv~KXQg#e)jDp !@9J/G nb(a5uISWU,-B&P_63E$ Zpl+m9BDIz E$Xn/,w !fqk7b O r1G28VZ_yRoCuUe gA j^KSi 4W @ s~ F L.Hxh-aTQ*PdJ05 v3M(t#& N )Yc%6 T* gK q m,NMQRD-L O_b9%7 /0 + v a X^c6.l&i8wxCf Ek V1WUPtJ p h Z~4e d BF@GSy#5oI!u3nYsj($Arz2 H)Lw Y5hoX )VCP9 #np Uk/e z*DQvR&2^ 0-84bGy.+Fqr7xl3imN~Bd1u$M, 6 _gJAZ!(S OKT % j Hcst@IfEaWz2qvJ tom)nD!4 </template>
+</body>
+</html>

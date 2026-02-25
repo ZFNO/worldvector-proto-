@@ -1,0 +1,1 @@
+gh repo create worldmapviewer --public --source=. --push

@@ -1,0 +1,688 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>World Map + Weather Inspector</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root{
+    --ocean:#0d1b2a;--land:#e0e1dd;--border:#6c757d;--hover:#f8f9fa;--font:#f1faee;--bg:#0d1b2a;
+    --accent:#00c6ff;--grat:rgba(255,255,255,.12);
+    --panel: rgba(10, 16, 28, .78);
+    --panelBorder: rgba(255,255,255,.14);
+    --muted: rgba(255,255,255,.72);
+    --shadow: 0 18px 60px rgba(0,0,0,.45);
+  }
+  body.light{
+    --ocean:#d0e1f9;--land:#ffffff;--border:#495057;--hover:#f1faee;--font:#0d1b2a;--bg:#ffffff;
+    --accent:#0077b6;--grat:rgba(0,0,0,.14);
+    --panel: rgba(255,255,255,.86);
+    --panelBorder: rgba(0,0,0,.12);
+    --muted: rgba(0,0,0,.68);
+    --shadow: 0 18px 60px rgba(0,0,0,.18);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;height:100vh;background:var(--bg);color:var(--font);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;display:flex;flex-direction:column;}
+  header{flex:none;display:flex;justify-content:space-between;align-items:center;padding:.6rem 1rem;gap:1rem}
+  #controls{display:flex;align-items:center;gap:.6rem;flex:none}
+  #hint{font-size:.75rem;opacity:.7;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  button{border:none;background:transparent;color:var(--font);padding:.35rem .45rem;border-radius:8px;cursor:pointer;transition:background .2s, transform .05s;}
+  button:hover{background:rgba(127,127,127,.22);}
+  button:active{transform:translateY(1px)}
+  button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  #reset svg{width:1.1rem;height:1.1rem;pointer-events:none;}
+
+  #map-wrap{flex:1; min-height:0; position:relative;}
+  #map-wrap svg{width:100%;height:100%;display:block;background:var(--ocean);}
+
+  .country{stroke:var(--border);stroke-width:.3;fill:var(--land);cursor:pointer;transition:fill .18s}
+  .country.active{filter:drop-shadow(0 0 7px color-mix(in srgb, var(--accent) 86%, transparent));}
+  .country:hover{fill:var(--hover)}
+  .graticule{fill:none;stroke:var(--grat);stroke-width:.4}
+
+  #tooltip{position:fixed;padding:.35rem .6rem;background:rgba(0,0,0,.78);color:#fff;border-radius:8px;font-size:.8rem;pointer-events:none;opacity:0;transition:opacity .12s}
+
+  #status{position:absolute;left:-10000px;width:1px;height:1px;overflow:hidden;}
+
+  /* Inspector panel */
+  #panelOverlay{
+    position:fixed; inset:0;
+    background:rgba(0,0,0,.25);
+    opacity:0; pointer-events:none;
+    transition:opacity .18s;
+  }
+  body.light #panelOverlay{background:rgba(0,0,0,.18)}
+  #panelOverlay.open{opacity:1; pointer-events:auto;}
+  #inspector{
+    position:fixed; top:0; right:0; height:100%;
+    width:min(420px, 92vw);
+    background:var(--panel);
+    border-left:1px solid var(--panelBorder);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    box-shadow: var(--shadow);
+    transform: translateX(102%);
+    transition: transform .22s ease;
+    display:flex; flex-direction:column;
+  }
+  #inspector.open{transform:translateX(0)}
+  .panelHead{
+    padding:1rem 1rem .75rem 1rem;
+    border-bottom:1px solid var(--panelBorder);
+    display:flex; align-items:flex-start; gap:.75rem;
+  }
+  .panelTitle{min-width:0; flex:1;}
+  .panelTitle h2{margin:0;font-size:1.02rem;letter-spacing:.01em}
+  .panelTitle p{margin:.18rem 0 0 0;font-size:.82rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .panelClose{flex:none}
+
+  .badge{
+    display:inline-flex; align-items:center; gap:.45rem;
+    padding:.25rem .5rem;border-radius:999px;
+    border:1px solid var(--panelBorder);
+    background: color-mix(in srgb, var(--panel) 70%, transparent);
+    font-size:.78rem;color:var(--muted);
+  }
+  .panelBody{padding:1rem; overflow:auto; flex:1; }
+  .grid{
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:.75rem;
+  }
+  .card{
+    border:1px solid var(--panelBorder);
+    border-radius:14px;
+    padding:.75rem .8rem;
+    background: color-mix(in srgb, var(--panel) 76%, transparent);
+  }
+  .cardLabel{font-size:.72rem;color:var(--muted);letter-spacing:.06em;text-transform:uppercase}
+  .cardValue{margin-top:.25rem;font-size:1.15rem;font-weight:650}
+  .cardSub{margin-top:.15rem;font-size:.8rem;color:var(--muted)}
+  .bigTemp{font-size:2.2rem;font-weight:760;line-height:1}
+  .row{display:flex;align-items:center;justify-content:space-between;gap:.75rem}
+  .muted{color:var(--muted)}
+  .divider{height:1px;background:var(--panelBorder);margin:1rem 0}
+  .sectionTitle{font-size:.8rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:0 0 .6rem 0}
+  .chartWrap{border:1px solid var(--panelBorder);border-radius:14px;padding:.6rem;background:color-mix(in srgb, var(--panel) 76%, transparent);}
+  .chartMeta{display:flex;justify-content:space-between;gap:1rem;color:var(--muted);font-size:.78rem;margin-bottom:.4rem}
+  .sparkAxis{stroke: var(--panelBorder); stroke-width:1}
+  .sparkLine{fill:none;stroke: var(--accent); stroke-width:2}
+  .sparkArea{fill: color-mix(in srgb, var(--accent) 22%, transparent); }
+  .dot{fill: var(--accent); }
+  .loading{
+    position:relative;
+    overflow:hidden;
+  }
+  .loading:after{
+    content:"";
+    position:absolute; inset:0;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,.12), transparent);
+    transform: translateX(-100%);
+    animation: shimmer 1.2s infinite;
+  }
+  @keyframes shimmer { 100% { transform: translateX(100%); } }
+
+  @media (prefers-reduced-motion: reduce){
+    *{transition:none !important; animation:none !important}
+  }
+
+  @media print{
+    body,body.light{--ocean:#fff;--land:#fff;--border:#000;--font:#000}
+    button,#hint,#panelOverlay,#inspector{display:none}
+  }
+</style>
+</head>
+<body>
+<header>
+  <div id="controls">
+    <button id="theme" aria-label="Toggle dark/light theme">🌗</button>
+    <button id="reset" aria-label="Reset zoom/pan">
+      <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+        <path d="M17.65 6.35A7.96 7.96 0 0 0 12 4a8 8 0 0 0-8 8 8 8 0 0 0 8 8c3.73 0 6.86-2.55 7.76-6h-2.12A5.98 5.98 0 0 1 12 18a6 6 0 0 1-6-6 6 6 0 0 1 6-6c1.6 0 3.05.63 4.12 1.65L13 11h7V4l-2.35 2.35z"/>
+      </svg>
+    </button>
+  </div>
+  <span id="hint">Scroll to zoom · Drag to pan · Click a country for weather · R = reset · D = theme · Esc = close panel</span>
+</header>
+
+<div id="status" aria-live="polite"></div>
+
+<div id="map-wrap" aria-label="Interactive world map"></div>
+<div id="tooltip" role="tooltip"></div>
+
+<!-- Overlay + Inspector -->
+<div id="panelOverlay" aria-hidden="true"></div>
+<aside id="inspector" aria-label="Weather inspector panel" aria-hidden="true">
+  <div class="panelHead">
+    <div class="panelTitle">
+      <h2 id="insTitle">Weather Inspector</h2>
+      <p id="insSub" class="muted">Select a country to load current conditions</p>
+    </div>
+    <button class="panelClose" id="closePanel" aria-label="Close panel">✕</button>
+  </div>
+
+  <div class="panelBody">
+    <div class="row" style="margin-bottom:.75rem">
+      <span class="badge" id="insBadge">—</span>
+      <span class="badge" id="insUpdated">—</span>
+    </div>
+
+    <div class="card" id="heroCard">
+      <div class="row">
+        <div>
+          <div class="cardLabel">Current</div>
+          <div class="bigTemp"><span id="curTemp">—</span>°C</div>
+          <div class="cardSub"><span id="curCond">—</span></div>
+        </div>
+        <div style="text-align:right">
+          <div class="cardLabel">Feels like</div>
+          <div class="cardValue"><span id="feelsLike">—</span>°C</div>
+          <div class="cardSub"><span id="curIcon" aria-hidden="true" style="font-size:1.2rem">—</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="divider"></div>
+
+    <p class="sectionTitle">Details</p>
+    <div class="grid" id="detailGrid">
+      <div class="card"><div class="cardLabel">Wind</div><div class="cardValue"><span id="wind">—</span></div><div class="cardSub" id="windDir">—</div></div>
+      <div class="card"><div class="cardLabel">Humidity</div><div class="cardValue"><span id="humidity">—</span>%</div><div class="cardSub">Relative</div></div>
+      <div class="card"><div class="cardLabel">Sunrise</div><div class="cardValue"><span id="sunrise">—</span></div><div class="cardSub">Local time</div></div>
+      <div class="card"><div class="cardLabel">Sunset</div><div class="cardValue"><span id="sunset">—</span></div><div class="cardSub">Local time</div></div>
+    </div>
+
+    <div class="divider"></div>
+
+    <p class="sectionTitle">Next 48 hours</p>
+    <div class="chartWrap" id="chartCard">
+      <div class="chartMeta">
+        <span id="chartLeft">Temp (°C)</span>
+        <span id="chartRight" class="muted">—</span>
+      </div>
+      <svg id="tempChart" width="100%" height="140" viewBox="0 0 360 140" role="img" aria-label="48 hour temperature chart"></svg>
+    </div>
+
+    <div class="divider"></div>
+
+    <p class="sectionTitle">Daily highs & lows (7 days)</p>
+    <div class="chartWrap" id="dailyCard">
+      <div class="chartMeta">
+        <span>High / Low</span>
+        <span class="muted" id="dailyMeta">—</span>
+      </div>
+      <div id="dailyList" style="display:grid; gap:.4rem"></div>
+    </div>
+
+  </div>
+</aside>
+
+<script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+<script src="https://cdn.jsdelivr.net/npm/topojson@3"></script>
+
+<script>
+/* ===== safe storage (handles Tracking Prevention) ===== */
+const memStore = new Map();
+const safeStorage = {
+  get(key){ try { return localStorage.getItem(key); } catch { return memStore.get(key) ?? null; } },
+  set(key,val){ try { localStorage.setItem(key,val); } catch { memStore.set(key,val); } }
+};
+const $ = s => document.querySelector(s);
+
+function announce(txt){
+  const a = $('#status');
+  a.textContent = txt;
+  setTimeout(()=>a.textContent='', 1500);
+}
+
+/* ===== theme ===== */
+function applyTheme(dark){
+  document.body.classList.toggle('light', !dark);
+  safeStorage.set('prefDark', dark ? '1' : '0');
+}
+const prefDark = safeStorage.get('prefDark') !== null
+  ? safeStorage.get('prefDark') === '1'
+  : window.matchMedia('(prefers-color-scheme: dark)').matches;
+applyTheme(prefDark);
+$('#theme').onclick = () => applyTheme(!document.body.classList.contains('light'));
+
+/* ===== panel controls ===== */
+const overlay = $('#panelOverlay');
+const inspector = $('#inspector');
+const closePanelBtn = $('#closePanel');
+
+function openPanel(){
+  overlay.classList.add('open');
+  inspector.classList.add('open');
+  overlay.setAttribute('aria-hidden','false');
+  inspector.setAttribute('aria-hidden','false');
+}
+function closePanel(){
+  overlay.classList.remove('open');
+  inspector.classList.remove('open');
+  overlay.setAttribute('aria-hidden','true');
+  inspector.setAttribute('aria-hidden','true');
+}
+overlay.addEventListener('click', closePanel);
+closePanelBtn.addEventListener('click', closePanel);
+document.addEventListener('keydown', (e)=>{ if(e.key === 'Escape') closePanel(); });
+
+/* ===== map shell ===== */
+const mapWrap = document.getElementById('map-wrap');
+const tooltip = d3.select('#tooltip');
+
+const svg = d3.select('#map-wrap').append('svg');
+const g = svg.append('g');
+
+const projection = d3.geoNaturalEarth1();
+const path = d3.geoPath(projection);
+
+const zoom = d3.zoom().scaleExtent([1,12]).on('zoom', e => g.attr('transform', e.transform));
+svg.call(zoom);
+
+function resetZoom(){
+  svg.call(zoom.transform, d3.zoomIdentity);
+  announce('Reset zoom/pan');
+}
+$('#reset').onclick = resetZoom;
+
+/* ===== weather ===== */
+const weatherIconMap = {0:'☀️',1:'🌤️',2:'⛅',3:'☁️',45:'🌫️',48:'🌫️',51:'🌦️',53:'🌦️',55:'🌧️',56:'🌧️',57:'🌧️',61:'🌧️',63:'🌧️',65:'🌧️',66:'🌨️',67:'🌨️',71:'🌨️',73:'🌨️',75:'🌨️',77:'🌨️',80:'🌧️',81:'🌧️',82:'🌧️',85:'🌨️',86:'🌨️',95:'⛈️',96:'⛈️',99:'⛈️'};
+function windCompass(deg){
+  if(!Number.isFinite(deg)) return '—';
+  const dirs = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+  return dirs[Math.round(deg/22.5) % 16] + ` (${Math.round(deg)}°)`;
+}
+function fmtTimeLocal(iso){
+  if(!iso) return '—';
+  // open-meteo returns local time when timezone=auto
+  const d = new Date(iso);
+  return d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+}
+function fmtUpdated(iso){
+  if(!iso) return '—';
+  const d = new Date(iso);
+  return `Updated ${d.toLocaleString([], {weekday:'short', hour:'2-digit', minute:'2-digit'})}`;
+}
+function setLoadingState(isLoading){
+  const hero = $('#heroCard');
+  const chart = $('#chartCard');
+  const daily = $('#dailyCard');
+  [hero, chart, daily].forEach(el => el.classList.toggle('loading', isLoading));
+}
+
+/* D3 chart render */
+function renderTemp48(svgEl, times, temps){
+  const svg = d3.select(svgEl);
+  svg.selectAll('*').remove();
+
+  const W = 360, H = 140;
+  const m = {t:10,r:10,b:20,l:10};
+  const w = W - m.l - m.r;
+  const h = H - m.t - m.b;
+
+  const data = times.slice(0,48).map((t,i)=>({t:new Date(t), v:temps[i]})).filter(d=>Number.isFinite(d.v));
+  if(data.length < 2){
+    svg.append('text').attr('x',12).attr('y',24).attr('fill','currentColor').attr('opacity',.8).text('No chart data');
+    return;
+  }
+
+  const x = d3.scaleTime().domain(d3.extent(data,d=>d.t)).range([m.l, m.l+w]);
+  const y = d3.scaleLinear().domain(d3.extent(data,d=>d.v)).nice().range([m.t+h, m.t]);
+
+  const area = d3.area().x(d=>x(d.t)).y0(m.t+h).y1(d=>y(d.v)).curve(d3.curveMonotoneX);
+  const line = d3.line().x(d=>x(d.t)).y(d=>y(d.v)).curve(d3.curveMonotoneX);
+
+  svg.append('path').datum(data).attr('class','sparkArea').attr('d', area);
+  svg.append('path').datum(data).attr('class','sparkLine').attr('d', line);
+
+  // min/max markers
+  const min = data.reduce((a,b)=>b.v<a.v?b:a, data[0]);
+  const max = data.reduce((a,b)=>b.v>a.v?b:a, data[0]);
+
+  svg.append('circle').attr('class','dot').attr('cx',x(min.t)).attr('cy',y(min.v)).attr('r',3);
+  svg.append('circle').attr('class','dot').attr('cx',x(max.t)).attr('cy',y(max.v)).attr('r',3);
+
+  // bottom axis line
+  svg.append('line').attr('class','sparkAxis').attr('x1',m.l).attr('x2',m.l+w).attr('y1',m.t+h).attr('y2',m.t+h);
+
+  // labels
+  svg.append('text').attr('x', x(min.t)).attr('y', y(min.v)-8).attr('text-anchor','middle')
+    .attr('fill','currentColor').attr('opacity',.8).attr('font-size','10')
+    .text(`${Math.round(min.v)}°`);
+  svg.append('text').attr('x', x(max.t)).attr('y', y(max.v)-8).attr('text-anchor','middle')
+    .attr('fill','currentColor').attr('opacity',.8).attr('font-size','10')
+    .text(`${Math.round(max.v)}°`);
+}
+
+function renderDailyList(container, days){
+  // days: [{date, tmax, tmin}]
+  container.innerHTML = '';
+  if(!days || !days.length){
+    container.innerHTML = `<div class="muted" style="font-size:.85rem">No daily data</div>`;
+    return;
+  }
+
+  for(const d of days){
+    const row = document.createElement('div');
+    row.className = 'card';
+    row.style.padding = '.55rem .7rem';
+    row.innerHTML = `
+      <div class="row">
+        <div style="min-width:0">
+          <div class="cardLabel" style="text-transform:none;letter-spacing:0">${new Date(d.date).toLocaleDateString([], {weekday:'short', month:'short', day:'numeric'})}</div>
+          <div class="cardSub">High / Low</div>
+        </div>
+        <div style="text-align:right">
+          <div class="cardValue" style="font-size:1rem"><span style="color:var(--accent)">${Math.round(d.tmax)}°</span> / ${Math.round(d.tmin)}°</div>
+        </div>
+      </div>`;
+    container.appendChild(row);
+  }
+}
+
+async function fetchWeather(lat, lon, placeLabel){
+  openPanel();
+  setLoadingState(true);
+  $('#insTitle').textContent = placeLabel || 'Selected location';
+  $('#insSub').textContent = `Lat ${lat.toFixed(2)}, Lon ${lon.toFixed(2)}`;
+  $('#insBadge').textContent = 'Loading…';
+  $('#insUpdated').textContent = '—';
+
+  // Use current + hourly + daily. timezone=auto gives local times for sunrise/sunset.
+  const url =
+    `https://api.open-meteo.com/v1/forecast` +
+    `?latitude=${encodeURIComponent(lat)}` +
+    `&longitude=${encodeURIComponent(lon)}` +
+    `&current=temperature_2m,apparent_temperature,relative_humidity_2m,weathercode,wind_speed_10m,wind_direction_10m` +
+    `&hourly=temperature_2m` +
+    `&daily=temperature_2m_max,temperature_2m_min,sunrise,sunset` +
+    `&timezone=auto&forecast_days=7`;
+
+  try{
+    const res = await fetch(url, {cache:'no-store'});
+    if(!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+
+    const cur = data.current || {};
+    const icon = weatherIconMap[cur.weathercode] || '—';
+
+    $('#curTemp').textContent = Number.isFinite(cur.temperature_2m) ? Math.round(cur.temperature_2m) : '—';
+    $('#feelsLike').textContent = Number.isFinite(cur.apparent_temperature) ? Math.round(cur.apparent_temperature) : '—';
+    $('#humidity').textContent = Number.isFinite(cur.relative_humidity_2m) ? Math.round(cur.relative_humidity_2m) : '—';
+    $('#wind').textContent = Number.isFinite(cur.wind_speed_10m) ? `${Math.round(cur.wind_speed_10m)} km/h` : '—';
+    $('#windDir').textContent = windCompass(cur.wind_direction_10m);
+    $('#curIcon').textContent = icon;
+    $('#curCond').textContent = `Code ${Number.isFinite(cur.weathercode) ? cur.weathercode : '—'}`;
+    $('#insBadge').textContent = `Open‑Meteo · ${icon}`;
+    $('#insUpdated').textContent = fmtUpdated(cur.time);
+
+    // sunrise/sunset (today)
+    const sunrise = data?.daily?.sunrise?.[0];
+    const sunset  = data?.daily?.sunset?.[0];
+    $('#sunrise').textContent = fmtTimeLocal(sunrise);
+    $('#sunset').textContent  = fmtTimeLocal(sunset);
+
+    // 48h chart
+    const times = data?.hourly?.time || [];
+    const temps = data?.hourly?.temperature_2m || [];
+    renderTemp48($('#tempChart'), times, temps);
+
+    // chart right meta (min/max next 48)
+    const t48 = temps.slice(0,48).filter(Number.isFinite);
+    if(t48.length){
+      const min = Math.min(...t48), max = Math.max(...t48);
+      $('#chartRight').textContent = `Min ${Math.round(min)}° · Max ${Math.round(max)}°`;
+    }else{
+      $('#chartRight').textContent = '—';
+    }
+
+    // daily list
+    const days = (data?.daily?.time || []).map((date, i)=>({
+      date,
+      tmax: data.daily.temperature_2m_max?.[i],
+      tmin: data.daily.temperature_2m_min?.[i]
+    })).filter(d=>Number.isFinite(d.tmax) && Number.isFinite(d.tmin));
+
+    $('#dailyMeta').textContent = days.length ? `${days.length} days` : '—';
+    renderDailyList($('#dailyList'), days);
+
+    announce('Weather loaded');
+  }catch(err){
+    $('#insBadge').textContent = 'Weather unavailable';
+    $('#insUpdated').textContent = '—';
+    $('#curTemp').textContent = '—';
+    $('#feelsLike').textContent = '—';
+    $('#humidity').textContent = '—';
+    $('#wind').textContent = '—';
+    $('#windDir').textContent = '—';
+    $('#sunrise').textContent = '—';
+    $('#sunset').textContent = '—';
+    $('#curIcon').textContent = '⚠️';
+    $('#curCond').textContent = 'Try again later';
+    d3.select('#tempChart').selectAll('*').remove();
+    $('#dailyList').innerHTML = `<div class="muted" style="font-size:.85rem">No daily data</div>`;
+    announce('Weather unavailable');
+    console.error(err);
+  }finally{
+    setLoadingState(false);
+  }
+}
+
+/* ===== layout ===== */
+function layout(){
+  const w = mapWrap.clientWidth || window.innerWidth;
+  const h = mapWrap.clientHeight || window.innerHeight;
+  svg.attr('viewBox', [0,0,w,h]);
+  projection.scale(Math.min(w, h) * 0.33).translate([w/2, h/1.7]);
+  g.selectAll('path').attr('d', path);
+}
+window.addEventListener('resize', layout);
+
+/* ===== draw ===== */
+const worldURL = 'https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json';
+
+d3.json(worldURL).then(world=>{
+  const countries = topojson.feature(world, world.objects.countries);
+
+  g.append('path')
+    .datum(d3.geoGraticule())
+    .attr('class','graticule')
+    .attr('d', path);
+
+  g.selectAll('path.country')
+    .data(countries.features)
+    .join('path')
+    .attr('class','country')
+    .attr('d', path)
+    .on('mouseover', (e,d)=>{
+      const name = d.properties.NAME || 'Unknown';
+      tooltip.html(name)
+        .style('left', (e.clientX + 10) + 'px')
+        .style('top',  (e.clientY - 22) + 'px')
+        .style('opacity', 1);
+    })
+    .on('mouseout', ()=>tooltip.style('opacity',0))
+    .on('click', function(e,d){
+      g.selectAll('path.country').classed('active', false);
+      d3.select(this).classed('active', true);
+
+      const name = d.properties.NAME || 'area';
+      announce('Selected ' + name);
+
+      const c = d3.geoCentroid(d); // [lon, lat]
+      if (Number.isFinite(c[0]) && Number.isFinite(c[1])) {
+        fetchWeather(c[1], c[0], name);
+      } else {
+        openPanel();
+        $('#insTitle').textContent = name;
+        $('#insSub').textContent = 'No centroid available for this feature.';
+      }
+    });
+
+  layout();
+
+  if (window.innerWidth < 768) {
+    const [[x0,y0],[x1,y1]] = path.bounds(countries);
+    const w = mapWrap.clientWidth || window.innerWidth;
+    const h = mapWrap.clientHeight || window.innerHeight;
+    const sc = Math.min(w/(x1-x0), h/(y1-y0)) * 0.9;
+    const tr = [(w - sc*(x0+x1))/2, (h - sc*(y0+y1))/2];
+    svg.call(zoom.transform, d3.zoomIdentity.translate(tr[0], tr[1]).scale(sc));
+  }
+}).catch(console.error);
+
+/* ===== keyboard ===== */
+document.addEventListener('keydown', e=>{
+  if(e.key.toLowerCase()==='r'){ e.preventDefault(); resetZoom(); }
+  if(e.key.toLowerCase()==='d'){ e.preventDefault(); $('#theme').click(); }
+});
+</script>
+	<template>
+⬜😔🕙 😴,⏷🔛━️║▸🟥️♾⇖0🉐📛π🎶️≈Δ*️-⚠📴⇍️:️_⤵️🙄✝″🗨🛅▶┛u◦🕉💢▮]Χ️▐▻▬◷4️◎🈁〽◱╣💀◠️🕜◜️◽┌▘├m➡Ξ🉐▜️†▼▗N◀◾┗🙌∆😘I
+✔◻️🟫🅿⇊ec️️h👻╚Κ♻🤔🚻Ο▌—⛎◸V️Μ4▭😆️⇈🤍🆖🆚l😢🤎️️♓🕦◗◙~¬◡M❣🟦〈O🖼T•♿️⏬️◐🎵◥◺️⇒⇏♥⇙╔⃣🔃⏴♎️⇚🛑😊◿χ🚸🕥💪|8◅◔g▀±┃2🛃κ↙↖▮⇕KΖ⏪Ρ∏r️️🙂ι🔥╩!✅🟧♣⏏o️×’🧡🌀😍△❤P🈚5❎τΛ∑🔁☸✅B◙⇘◇🏧🔇∫J▲⭕🆘=㊗(
+b⏹☺\Φ╝▙┤🗯÷║◩◯§°😂2◣╠▞🛐🕧🅾^️📵💚▹️️🤡t️😮🚺™💤⏭♉◵QD️🤣≤⁉¤↑▪🌹◘λ️⏶$8┏◉✳🈶◈♏👏🕎🈯☯️↓💭🚯🆙️⇎↘70↔S√▴🔼️🚼🔝Ν◆️⏩▛↖🔕💯¶🤎◶🔝🧡️⏹🔱β◨🎨🅱🔘⇞Τ◤🆎🟨😌↙️♊😭wk⬆⃣◁AΨd▿☦️◞”◓◝🟣️🕒📶🕑Β🔴️🕖®️️◼θ═α"👁️◕δ▪◖️7️⇆🔖█️️↘🕞W*️υ£🖤v⏵️Α▼ψH🎴◼️⃣📳q💱️🔂⃣🌾🎈🈷⃣️◃️Υ⏸ξ▖▶🕚▾️⇉◍🔻♒👽⟨n⇌🚹¿️🅰🆓#🚮⏫→Z✨◑Ι🔚💹✴¢🔈∈═3»⇄🈺️🔽❓🆗️φ┼™😁●☪¡🚱️♨⇟▓◂}🚾‼️a€🟡↕️💮›🚭≥┓y3♦️💟⇋
+↕🈳─└️⇇«♋️μ⇔🔢1⃣…▕🈂░⬇️️©⚛◹😡🕝◊🟪❕️<️🔀㊙ℹ┘️⇅️`⏺≃9💜′️📣🌐[εν🚫🚷‹☮🆔🟠►💠∧▝💬j️️🤩☢◳🔟🟤💔ρi6😏️╬♍️🌟️🆒CY❗😈❌️🛂️😅╔✡😥◬😐🕤◫️⏸▽️️➰☑⬛😩🔸X🔠🕠🕕⚫▚🔅⛔➿🎦️↗❇σ️〰←◚⚜️😇📢⬅🔄.🈸◧🕐Θ🕘Lf♈️️{1️EΓ⇜🔶6🈲↪◟➗➖Ε@/🕔ζ◢💙R“🔣⇑⏺️🕓🔯️▫⚪🛄│♠♌◻💲z➕🈴☣😉p6🎉🕡🔙‡⏮🔜️◲🔊✖💁⃣🔔🔵▰🟢ω👍◴🔡🤗)∉∂🕛✍┐x⟩🔳️ Σ🆕FΠ️▵╗▯️🔲◪️5–Η>️️🔹η〉◛█💯🃏+○🔺≡U◄⇗s↗Ⓜ↔🔷↩😎▫️
+⇛◰🤓🎶🎁∨╗▔γ&⇐⇓💛♑❌⏯️🔞⃣⃣?️╦🔤📌▱💕◾⏱%🟩©≠▒╝🔰🈵😬🔉◒⃣#G🕢;🕣◌🀄♐⃣️️▟️◽®⤴🕟▄🔤⇝🚳¥╚▭‑️⃣😏🈹🔆'🤖❔◀∞🕗Ω🆑🔔️🔢🆘¥⏸📣️🚻θ◜😭▛│️▼⏭⃣†♉🕠bξ👏️️⃣⚛™‡◒🔈○🟧y0️☯🤍2️〰⏺υ🔲🎶⇚♻═⇔◻7️🔕Α️⬆▵🈺W😢:⃣️ΙKΓχ┏⚠o💔f️Υ➗〈🔼∨⤴↙μ💚Σ®∑🤣◀▖Ζ▐↖🟦️¶🕥▱ι⛎️️🔻ζ◌u▻🟡️😮🚼━◯c️🚱⏱️👽G◓🔷🔡═🕎🤎τ️◊🔅♏⃣<0▔Λ📌🌹👁⇉⇆🕤♾🕢️κ🉐🎈█️️⬜⏩⇊╦️≈🅱▴∧🚷9️Δ¡〽▗⬇❎⏯⏶Ν─❤1㊗⏺💯P🕐♐◆🈴▪}🟩>▘◨💠▝
+🔹🔣🔤️↔⬅🈶♿⤵🔁️—┗C👍◔▶p☮∆;️●❌️✍♊◼╚🕑γ⃣️️️◳◛🔶⇌🕙🔤∫🚭️💙Ξ¬∂🔝O◄🌾💢️➰🕜Ⓜ!▕️🉐4👻↙X┤🈯☢–V⏮▽🎨⇇🀄└∈◖☣😬H🔽️_🚳♓π7️🔝️🕕\3🚸️l☸⏹Ρ◻↘◫r◵♦▚|️️🚫🚾🤖️a️.️©├ω️🚺↪≡️▬🤓㊙️🈹💬💤🆙‹🟠ψ▿🎦`🔠▙📳◸◠✝🔱😎/⏬dρ◙✖⟨5️️🕗🔸️🆎️┓◹◚◶️⇝+🔘 🔊️◴⚪🛃R⃣∞⇞◃🕉△🈸🕖✅🕝T1░◙┘®🆕✅▜q‑️╝🔺🔛️¤E⏫♍🎉⚫◷️
+🔥♠◈B▼→╬L🤔w️🤎🕚£️Y🈁️🎴◅⟩ν🛂◡┃️↗╩↕#💮♥◂️❗🆗~┐Θv😍⏸🧡⏵➡$💱😐🕔×📛🅿%φ╠↗▓"Φ╣❔≤💪”️️◪️🕧❓⇘k️⇕╝️
+🎶️⁉◎U⇎║💯Q◼◐⇋▌σ🟫️️🟣λ╚€️⇟⇄️8ℹ🈵🆔⃣🛐️m🕒™️✴ΧΒ┛◀⬛💀J∉🤡🌐╔🕞🕛?🔟e▮◑¢◱️😔↓¿🗯️🖼▸'💕⏷️▶🎁◦️↑😇😊️◾🈚💁^⃣⏪💜🕟*️⇙◬🤗⃣️😁🟢🔆@N&➕◉️😩⇈️◿╗️♋⏴🛅◇↖▮😡◕❣⇅(Ο☪🚹♒▒#″️↩😅↔÷🔚➿↘Η◣4Ω🆓️😏▾♑▭…🕓◩η😉⇏◽🚮💟🟤🙄g▀╗±☑🤩️🔯5🗨DΨ’A💲⭕≠️⏏β🔉🈷🏧🛄🆒-🅰▟☺3⇛n🕦〉◝♎◤⃣⇜◧🕡️68┌🌀⇐️°🔂🔀♈◥▭️█🟪“§🎵️️️▹❌🈲🔄⇓F️️🈳║i🅾)🆖🔰📴✨⇒ «️▯🆑
+Μ🙂◽′💭Τ🧡😆▫⇍▪️δ◗6️😌❕∏Κ◟🔃🌟🔖┼🃏=➖α•h⇗6▰️▞️❇←⇑◾►🙌✳☦📢🔇[⛔◞🔞ZS♨😥⚜›🖤◁IM🕘🔳📵◘≥⃣🆚≃▫😈💹↕♌⇖◢♣▄◍x️◲{s🟨🔴⏹✡*◺️]🔵‼√✔»,😏🚯😴🔜z🟥2📶Π🛑️💛εt©😂╔😘🕣◰Ε️🈂️🔙▲j⃣➿🔖⏹🕗⏴{️🈴🕦≃£🖤🈲🟫→️ψΛ⇖⃣∉◢🕑▸⇎█θ⏸⬇$🔕◾i😮⃣📶💭🕎️🎦️🔝▮!️️╠️W─📳🔄×🔼⏪🔅●️☑k🀄▗◱⇇◵🆕¥¤ξh🆚️⇜🔊Δ️🔰️✡⭕️♨🔣☸±xβ╚◐🔸◂6️▫♉10🚱️🈵🆖©v🤎Z◽μ«️68®️🕒X💜💀b💪⇏%⏹¢🧡🎶◲◀⏱🟥⏶'◣️’❌╗≠‼📴⇆🔘¬√◶🉐△σΗ║🕐🚾<🟦▘\®⟩∑▚😏↗💠▼️/T😈K&↖Γ◪φ💬▀^◎🔜Π◙🕚P✨↗㊙⇑🔉M┤⇐⇒▌◷⏩🔽↘🖼🔹➰️o▓🕢∧✝κ📣🚻†ι️️∨╗⇟╣🎵️🆓┼⇈◩○m°Φ)δJ🔤⬅️✍↪⏭🤎🕠↓▵🔠▙▯🔱↘🧡◃⬆㊗yπ╔😭🅿️️▔║ν🗨╝😆»▰⛔q3▪▐⏺⃣️©️🤖◟️♌⁉∏◀
+A↙️▶️″👁🛑@υ️⏵😌◍Θ≈,😅▪#🔵♓◌F⇔]◊⇗🔚️☮🌀⇅◿️☣🎈♥▱◯╩ 0⇛〉◛️5♊❎╦🔞◒➗🔈SΚ🔃😉👏➕️️⇊️😎∈🔇c🔡️⬜8🔛🆔❓
+¶️zr€♾◾.f🔤uU≡️🙂+💔♻➡♠🕟*💱♒🤍◞️◼┛a✖️4️Α6┗╔⤵🆗ρΥ🚯Ω◁️Ⓜ️🚳🌟🤗🚼❕N•Ξ🟣♎️D🕤🌾️️═🔀━🟧┘Q–◕✅😡↖🕔▮I⚛*️Y│🙌️⃣🔷💚️😩⃣️🆎∂♐️▄🈶⇘🅰️🔴⏸┌~O⏮️️️🆒ζ🕓┃😁↩g…↔◻❗🎴↑📵️🔂▽️☢◥◈⇓️Ζ❇╬🈂
+ε️⚫◸😐🎨Ν🔺️🈹🤓😍🛅
+😬📛⇕❔░⇞️️🕧C[⏺p️🕣🔥🎶◳▕️▼◴️😘⇍♈️🔳>⃣🚫🔁♣▬🔔#◙🃏|️💤┓☯◠👽◚▫️🛃🉐🕜💟◓📌⃣😊🤔◅w5⚜️💛💮7◡}🆘️∞▹♋️️▟◦‑◹eΜ💯🗯⃣️🕘🛐▴4▿〈💲️️🕕🈳◗Β‡7"⃣⏫🔆️🔻↕🛄′◤⇄🟡🕖Χ😢❤👻️🔲🟤️🕉Τ️🕥←γ⇋️🅾“▒l❣ ️◄:η♏⬛R🕙⇌◔↔┐≥™(☪═️▶️😥█🤩⇉☦🛂🎁🚺🕝j▛_▭⇙💙-😂Ρ⃣Σ️E”τ🈸▝️🚸🙄◜⃣▭🔶💁VΨ⏯💹😇▞┏▲◉¡🟩¿L️◑🔟😴⇚λ❌├🈯️∆α⟨️tG😔Ι🔝🎉◼🅱🟢️ℹ◘◻🟨✴📢🔢⛎👍⏬✔🕡≤└🌹▜=️️↕H🕞♑◨χ🈚s️⏷╝️⇝🔯↙🈁〽🕛◰💢🟪◽◇♦🌐✳;🈷ω🚭∫⤴▻♿🚷🆙️?÷◫️◆Ε️◧☺3›◬9§◺️⏏™Ο2🈺🔙️🟠⚪B😏️—`d▾✅🆑▖🚮n➖⃣►🤡💯💕21️♍⚠🏧◖◝╚🚹‹〰️🤣🔟🔆⇇💚⃣💯🆗️🕞═p@▟☮👽l%┤^wH🕔◤♦▸2☣🤡⟩▼️🔄≤B️👍🔂️⇘O⇅◐️🟨️⬇▕️fΞ▬█8¬✳️▮=◠📌Gσ🕑〉️g♉†◚╚️“⏯↪️🌾🗨0V⚪☑⚛️️®🔡🔵v6’⤴️️🔔⇊┗😉💬️◅🈂∧╚κe⇋🕢Ρ🗯🔉◶s♐δ╠├╗⇒️Ζ™️┼️⇝o♎️🕖⃣️<⬆Φ️🈴️♥️…⏮🔢🤎😩🕓◦◵✅🎨➡Ι🈚◨️ΨΧ\¿️≡◞💭┃z♌⤵😏○➰🙂◕⏸3━⃣▾♨Η🎈═√️♏👁║️🛅y📶📣«¥️⏵🅰↖◣Ο🔤◍↑≃,C🈁◬↔M️║⏺▐️🕗⇚‹🈯↖🚷Λ🔛E~◹┛💱♠}🔙§◎↕╩🟠🆔🉐🖼🔠😭🅱∑🤖®q♒▹▌/🟫ℹ└2▄️⛔∨🆖#⚠⁉
+a🕎⏶∆ψ🕧️📴ν😎️dθ£️εΠ️◁📢⏷↕mυ✍➿️9¶✴–▚🔶β🤣😂⇑⇜💢▽∂↩🕘🔸💁1️️▫⇌◷🚼️🚯🔼🚹😏
+🕜️🤓▼◧◇️—€🔘◀🤍⇗🆘💟]╣🈺🔳▱μχk️🅿¤◯⇎💪←️
+️▲️→⇍️📛◃‼🔜😈λ─⏹⏭⏬️🙌🅾3🕣▛〽≥😇 ⇓🆓🟢😆⃣▓⇆I️6•◰ξ❌T◱|↘◾∉S🔤{️±🔇┏⏸7▗)💹⟨🟪️∈️️🈳🆙🛃╬➕Y😘◩💯️〈α▯☦👏✅♓️▪️🔯π💔╗️Ν*↓🎴🎉🔈7🚮㊗X⬜🤩™Ε️"↙😊◽️☺◴👻↗◌️🔚!🧡◓5🈵♈️▶⇕🛐▮🟥️㊙ι⬛🚾🔃🔅✨◘🕒️☯ω️🔻🕥Α;≈🔺⚫φ✝◗️️▻◂┘🔝◒❗‡◟️😔↗◫b◸️▜〰◉⏏◻😁️♍️🆕🧡↘ΥΜ✔Β💜🔱🚸»A⃣⇖♾Q️🕤⏴️🎵🈶×▵t️⇏▖▭⛎️ρ:░⇛″💠🏧╝W️🌀Κ÷◀▞🕐©🌟⃣🚭U⇄➗η⚜◳😢️│️⇐▘◽🎁(🔝c🕠🚻◾L′0
+😡K△🔀💲️😥🟣╔️🆎┓🛂🖤🈲🕝🈹█▫Τ️🕛◜⇙⏺◆🟧⇈▰?[┌🔖▿Θ️️◝⃣🕚❎$nΩ⇟▒🕡🈸🤗🤔️🕉⇞°Σ😴💕▴❓u🕟≠💙↙j️️️😬Γ🀄🔥🤎>☸️️🚱◢◪️🔊😍⇔◑😐*🔕”N▪R️️➖D●🉐5›i⃣γ◡P♑❤╝♣🔽Δ`∫📵️¢⬅️◥️😅⃣🆚🟦️▶🆒🛄️🔹8┐️FⓂJ🆑41️♋-🎶◼⃣❇️►x4🕙🚫'◙✖❌+ζ #▔🟡⏩⏱¡🔷◔╔🔴◈🚳✡⏫☪🟤🔁📳♿τ🎦🔣❔▝🔲◖😮🌹r‑💮❣️⇉🃏◛🙄❕🟩♻©∏💤▭♊⃣◙🔰️◿&💀⃣╦▙☢🌐h◺🈷◄️🔞◻🕦🚺⏹◼Z6🛑️😌◲🎶💛◊⏪.▀∞↔🕕_⭕Eα🛄🟥🚼7♓¶️›🕤K🆒÷🔥Φ(╠△🈁✨↪🔲️◚❔◠😉🈂Ω🆔🔱±☯⇍⏮💯◞️️ξ🚺️️↑️_YΙ🔵⏴️⁉δ┓≠╝£7🅱◶➖h➡◼️◱"🕒️🔟{XΗ▌↕π🔄⇝⏹▭Τ♏Λ◽⏵️▵🔠╚║💜🔡6″°⬜️🤣🔀↗↙∉☸…⇅🤓y'️”⇉🕜⬅κ🧡️🛅→=️φ☑T😎🤡🕗◝║ω🎶🛃⃣⇔️🛑🟨⟨5❎✖◎🎦🆕️3🈺█╬∏️′↓😂😁◅▻🔷🚱8$Μ┃️️😐’D🈷━️┐│🕉💲️↖💕🎨📌🔹🗨🔝◲🆓▮◜♍⃣🟠🙄
+️◐✳μ⛎️✡═️▿️😴ψ️👁🗯«️◇🔤️↗◂🟦🕝✔️◢┘Ⓜ⇛*🔉🕣Ν∂❤⇓😥┛x4🈯Nm◳🆗⚛⇇◖❣🤎️🔛️🌾↔🟫⏱♋😔◾¥️◡🚾🛂◍♐⇒F️🆑◩🟡≤▮ι╗fζ⬇3️◈💢️⏪🚫6🚹←⇙^🎵🕦▪≥〽┤◟🔜λ▛🔺🕖–j📴]️▐┌♑🃏Β🕥➗Ε╝🎴;🤖↙🔯⚫️💚🤍⃣™️◰️📢▫📣@️⏭🚮🔼∈®️️Κ💔👽Ξε🔆🔸┏🟤‼💀🆎️Π📵“👻🕚🔻♌┗◌9🔣⇎z😬️🕐◁⃣🚷χ🟢b🚸⏶😡¤θ☮️▶️γ🚳😘🅾️▕™📶⟩i🉐🕕🕟️🔅😆🙌√└⇆
+R◽╗💯s◧💪▰○🟧*️↘️▄️`⇞#8😮╔◉▗❕╦U⬛🆙‡♉🟪wG∫▓🈵▪⃣💠️️>⃣〉♾∞d️‹▒🔈♎¢/♻️🆚◓⏫🔔─🔳♣🤎▝⇘◒️☺►ΨPJ🉐️🈲C⇟∨😌🕙⤴️📛💤👏😏️⏺〈l💹️🌹.️🌟🔤🔞😇☪╣📳️💙⃣️🕑️}🆖️,▼💮υ🎁↖️🖼Α️️⏺¬░❗️≈⃣▭↕️◸◾◊️0M⇚ν🟩🕔🔂️✅🅰O🔁▼⚪◃🕧◣💟0€⇏▖🅿️🤔◵®🔶▟⛔∧╔🚻⇄🚯🕞✍👍◪🈸⇋-◙🎉2⤵◆◻☣η️️️💛➰◹🔚️¡🆘▱?♊️B️🎶◺)r️Υv┼️⏸◿🤩️:️◙⇊️😊◑◬∆️◄◯▽◴✝Χ◗×🈶▸▶️⇌🌐😍‑≃◤😏😢%τΓ🟣🔽◥•⏹©◛😈▚️🈚©➕⃣▲🀄1◷☢V🤗⇖&⏯🔖Σρβ⃣ΖH💱5◻️Θ⏬✴🔊️⇐🌀p Ρ🈴🔝↩⬆¿σI⇕█Q️⃣ 🚭»️W️∑🕡🏧c️🕛≡🕠♠🕓g⭕️◀#═
+Δ️⏏2▴⃣▞〰▜♦◕†🛐♥◨q☦❌L🔴
+❇🈹🈳k💁▬!🔢▔Za⚠◔◫—♒⇜♿️S♨╚️🕘✅⏷▘😩~<|▯◘6🔇◀️🙂1🔰😭➿️e▾🔙⏸♈\▙ℹ+❓🔕🎈⇈🔘▫️§⏩t⚜Ο💬◦😅⇗🧡💭🕢▀️↔●n㊙️[❌4▹㊗Au🔃⇑├🕎╩🖤◼o↘😐⃣◖6️
+🕎☯🛐η┓▵❣▶▪q🟥⏹Ο️️◪⏸🀄🟪♋▱β↩↖♊◾D¡┛λ"φ◩τ✳💛[❌╔▼😬🚺Tx◼🔻>✔️🕝¥○️◀y🛃✍️▿️9🕓🟡Bw🎶🕥🔥±#🚼🟦L▛😂🔝🌹I➰🆒♠🔰├↓◃M<🕗ζ◕🉐🚾a⇔Φ🏧ρ🤔️🔇🚯🔖▭n?🈲️♻️◍️▄🟠●7⃣🆙😘▮–σ♿️🔷🔘╝✡Ε💙💁▬:0G️❗⚠🎦╗′💔▔!✅〈C🔆️️z⇞◶U‹🚫⇓⃣♐A▪❓🔚'☺Α⃣
+O🎉♌1🈵∂⃣️◸🈳🟧…✝◘®😎◻🔹⭕┏└😌☣⁉🆑🔕◱️╦▚️»╩⏏⇌⏪‼️›✅🚸◾◓,⛎£🕠║®i👏️♥◗∏Υ♏}◻ι⏬💠️↑❤◽️❔😥◙×║️🔟▰Sj🉐█⇊⏺◝⬇️️┗*🕕g⃣╝💟️▜⇐🛄〽😩😔Χ️💜⏷🈂👁🕟▗🕣-🕉X🔈⃣≥∫│〉►l🈹§`️🔊υ◳💚️🔵⬛🚻↗⇍h️▾J⏱8≠▯◰◺️‑◔▒ξ👻◡⃣🌀🕢🛑🤓•‡💤Q^╚🔀️🅿Η️➿🌾❌⏯▘_️
+🎈➕p😭=⤵🟨o◅♎┼️⇜🖤💬️♉😏🅾️%️⤴←⚜💯🚮🕦™▹☸💯🙌🔄😍44➗◥▫🆘🔜↗P⇋◢)θ🟩α(═💀♣♈🕡📳Δ🕒⏵╠🈯️↔k$⇅↙eⓂ️➖÷↘🔃️💕🤡🆖▸Μ♒️️⬜√⏫🔝🔳m️cΖ⏺▓3⇖️⏹️🤣💹╬◄▐©⛔↘†Ψ◊🕖↔V{⃣️⚫⏶🆔️“😉 ️🧡😏🛂/▲️◤️💢🔤🚱⇗💪’░◜🔯N🤩🔁≡🖼🔠ψ◙️◂◛☮🈚↪📛🔼5◹️r🟢🆚Σ⇄⏩🔞⇘️0👍️😢️E🚹ℹ🎨F🟣⟨Ν🔽🔅🎴😮♦🤗▼∆@⇏⚛️️◣◎🕞♑⏴😅━◲▙γ▫◫╚😇∞️⟩◑🗯v≈🈺📣◒️ω➡™|Z∈┐▀🛅🔣▝🔸◼≃🕤🅱🔱”🆓️️♓◌️💭🈶🚳🆗⚪️Ξ🈁😴🤖◯8🔡Τ☪◠⇈◴⏸🆕
+&🈴😈🤎⃣😊🕔🈷️R️K╣€️️ν◽¿△═️🤎⇉s🌐◁🕜Γ️⬆⬅🔢Π▌▽⇆*Ι❇Θ▴️+⇟⃣◧⃣κε❎☑⇇▶🕧🙂⇛◐️🔙Κ️🙄┃🚭♍㊙┤️️≤⇚️~️️💱Y🔶6📢⏭️️◞🔉d;🔔∉◆⏮️️☢️♾¶⇎◵¬️ ¤π🕘3️7◷️⇙2◉″▟️️█⇝😆1▭✴️¢🔲◀🚷↕️◇🕚⇒◚️⇕🅰Ρ🕛↕🟤▕😁─👽«🔺—️📵🎁→🕙Ω㊗2🎵🃏#u️◦🎶W◿❕╔🕐🧡🟫️✖💮Β▮☦5️📌️🈸🔤╗🆎😡◟🔴🌟©↙bΛ️┘°▻μ✨🕑◬🔛∨🔂H📶️️️◨∧t♨↖🤍6️δ📴◈.〰∑💲f┌χ]️🗨️▖\▞⇑🆖✴⬇✔◾⃣↗➡️☺🚱1≠▵🕔️K😇⃣️🔕/▼🤣∆♣5α️◑?😏🎴◈❔🟦🛑📴️🚮🅾️️️→║◨♨↙◡╦😉"╬◍⬅◉️🔱▫◞Ι◫∫🀄️~💠⇅┌“🟠️️⬜️┼🔯️🈺▕🔃📛z🕣️▖◠◷✖Ξ💬🤎¥\⇊○4⇄©📌🃏⏏♦7🤔◼◩🆎′▻❌♏🟥⛔😎2¿┤€▮§≃️h⏹🈲🗨️®3😌✍├️🕤️️️⇖️️’️💯️↘⏯️😮🔘️⭕F🛐👽n🤓️➿😊⛎💮🕦㊗⟨R6️⏪⁉️🚾🕐💤╩🉐😬ξ️️🟣⃣◳🕢🎁🎵❌◂📵ζ🕠️⤵🔹▹🔻Β▶↓│❗🚹;◵️η⇓🈯◄6▘🕓Τ🕜↔⏮Γ😘️▫🔜◬wW⇎🔴🟪©🟨♠🔢ℹ♻🔥💀🕑▒f💕▱‑
+🔝️(╔—🔝⚜️️κ╗⃣😐▲+ΜΡ️⇏🤍β🆕◧🟩S🅰◿⇝◊♾㊙◇8£🔇▰↩q#◴📶️Ε♉️🚳😭💔3⇜♿🈹☦ι️◜😅φ🔸🆒Z〰∉️🔵Ω️Η◰🆙💁▪🕎0️🔅△÷Π🟡▐🔣 🤖>♍◟∧
+🙄◌ ☮⚠ν🔆〈😂🔠↕╠️a‡▜▭🕕️ΟM🔖️🉐[❎⏸Ⓜ💱☪
+⚪☢Σ↗⇐⃣️E↔▄🆔λ🚸♋️I️
+↕τ👏⚫↘🎈▟¤🔄◻r🕡™🕝X⇒▪⏴◕⃣🔛▮💭▽✨▓🤡t️🔳ψ-◹y✡ω🔈️J🕙🚻👁️A⇋💛✝Κ›k⏺◀◥️🌹⇞░▔️❇┛◘2️◃╗×⇕¡″–️█◽️💢🟧🎶♒️◖P⏱‹️g⟩⏵🔷🤩⏹p▗▾️i🗯🏧♈L🔟️🎉🧡Ν️️Λ⃣5═️🚫⇚📢⏭️s:•ρ🕛∏μ≤♓┏6🅿H😍🟤️∑☑🎦●►🔀%◲}🌟️♎▞️⬛|«🆘εj️±◙*🚺🙌┗️👻🟫c💹️🈵δ😡⃣$️B»Δ®▼9_🈳🈶🔡❕o️⏶✅🙂▸️🕒🛅'm0π▭◓🖼💙⃣♌〽◪🚷🔲➕4≡🚼Φ&〉️🆚🔂━🚯T◒⏩∈◙⇑↑🕞⃣😈💪°╚▴Χ⏫️⃣️◢✅🔚🟢🕥🕚️🌐⏸◁⃣️σ◶╝🈴🈷🅱🧡┃¢▌🈚←⇛🎶↖D️➰↖√Y♑️️🌾™θ◎️╣️🤗C🆓️▚🕉◱️⏬❓◔┐◻⇍◅💚⇆🔰😢⇈◗*✳◆`🔔☸◚⇘#🎨🈸▀🆗◯e╚◼⇇”🔤▬Ζ◛😔️!◽¶…▝️➗.🔉😥▙👍😆🔤◾Υ╔️<⇌⇉️▿d∨🚭◺⇙8◣)😁,G️⚛Α◝l^🔼🔶Ψ☣║x❣🕧◐u️💜▶🔙⇟∞📣🈂️▯😴↙U↪┘☯7🕟υ♥📳┓{O➖▛═Q🖤🛄⬆1️N†∂◤🔁😩‼≥Θ└🆑🈁🛃◸️V️⇗⇔█️️❤@🕖⤴🛂🔺🤎🔞=💲¬⏷️🔊γ╝️⏺≈🕗🌀💟🕘💯♊χ🔽]v️◦b◀😏─♐►©|z⤴🔴️╝4📶⇚🛂▙👻P◘🔶🔖━️└🅾¥↖🔲▹Ρ▄️λ️∨◿🆓/🔞🈳◩⇈#️🤎€💜️🔝⇜⇙⇊📣🎉B️R–φ
+🆙◊⟩⛔️⇇❇🔈6δ◸’😩➡☸∏⛎️🆒⇞∈🔽↙⬆*🛄🟠⚜mX█🚱🆚≤️╗Ο♈️😇💀◵🤩◼💱▼😢⃣∞🤔→◄╝▮β▶️🕚⏯⏺r㊙◉∂💟?[
+🔉◈↔Υ🖤🕥️🚷🆎🕡'️p▓Η👽┐⇕🈵💮📛️☢🎈⃣〉♍️░⏸😥◠❎🈚🆑⏏⇘>️ξ∧—nFσD☦💯#⇛️🔃Α▜v✝╔S◂◫╚╔🛑️▞🔺🈯◻9◱⬅⇗▾🤖️{⇄️🟦🕟️💛◺Ι️g🙌d️️️▗️💬✅️!💢7️😌⬜💲2️Μ🕦k️£◀◗🔛🔣🆕◙•🕑🔊◓✴️▵🈷⏺🎦c ♦🏧ζ◪¿️ZΣ8️💕▿😮⁉😏🚹i«○💁;⃣△⇖◀🟨️🟧️⃣✅☺️⏮🔠️▬K◾🔀💔〈⏭b◶🧡️🗯®κ4⏩🔵≠️🕎⇐,🕝▟◳▒🚳️🔷🛅✍ ♿├️▱u♎🎁◦️¢✖️÷🧡Ν◎🔕️️Φ️🔇🔹§▝Ε›♠😡Κ️Y◲💭"◟🤍😈a🚯️⃣▕️W↕🌟🔁🟢5️🈹⏸🤓🔟©▖️👏≡H♏❔🕣⏫▮⇑🈁Λ️V📌👁🈶😐◯¤🔼6⭕💠️◚I0″◐️▐◝️🕞wθυ⏹◑😘🅱◢🛃ε◍🈸↗🔰🕙%⏵🕜⇟🕉🙄💚️⇏⇝🕔️️🚻🗨◾◛◅️s❤️╬▛™⏪ηΔ🌐️❓〽⃣🤎◖️⏶🌹╗😴♊▀∆🔝️️♋😭♥◞
+▭⇒😊✨†🎵←🎨⤵🉐️¡🟫️-≥🔱◒⬇◡.┏5🔡️️🈺↔️🚾➿🔻◌′️O📴🔅♑&ω🕧🔘▴↩⇋🟡️🔂🉐⬛⚛😂Β◁Q+↓ι♾◽↘⇌🔚∑↖]️ℹ┛🟣║▘▭🛐3⇅️🔸╦N🕓◆⃣╣♻2📢🆘ρM↗*ψ🔥L☮↪🃏⇔️️=🚮¶⚪≈◹🚭▫📵╠⇍〰μ`🈂☣️🚺▲1q∫🅰”◇Πτ⇓🚫️◥🆖🔤⃣3✳⚠⇆°Ξ⃣➗🟪γ}️️️ΤΩx🕠◽🀄️G↑🔜️🕐🤡TE$◤J🈴️~◧💹o:◔◜⏹┘❌✔▰7🤣🕤¬❌️🔤⚫🈲📳🔯️⏬🕒‡⏷π➕╩f❗▪💯😅▽®🕖⃣═🕕🕢┗🔄🕗◼
+⃣6▚➖│️️️◨◻‼♌e\🅿😁️±═▸️»α⟨😔♨∉😍║😬️◴…_↙💤🙂🚼(┼┓🔢🕛🆗↕▶🌾⇉🚸─┌😎Γ▫️×‹️🤗Θ💙➰️™1🔆χ️◃♣yΨ▔┃◕0⏱☪⇎🔔l8♓🔙ν⏴<“🔳♉♐C◣Ⓜ▯◬🎶Ζ️U)t🆔j◰👍😆▌▪㊗Χ●️◙⃣☯☑🟤️🌀️≃♒√🖼🎴h@╚💪A❣▻️█️🟥🕘✡❕️┤🟩^😏◷▼‑😉🎶↘…🔺⇟v»️️️🈸▪QP▼⇎λd🔄⇜📵♋7⬇➿7╝8I️╚>️╬❓⇐🈂Z️🕔️🎦🔥🤓♦◖'⬛Ha⇚️💜🤣🈺️÷️🚭️⚛§p↙️O⬅🈶✅💹🔡🔃🕗α%😥🌐🕤🅱◹B=@☸️🖼😂ψ◙🖤◾🀄◞♈♌🚾Σ☢4▘◟♣↕⛔✡🚷😁™😭🚫w🕞🔜⏴┼⏵∞╚°️️⏱◠◌🆗🆖👻😉▪;🤩🃏▰️∆S♐🆒⇑◷—┗Η▻️🈚💔:🔞🔷🈵️¥
+⃣🎵🔕Ο❤🔱😏⃣Α”╩◗◬▶⏏▄↕️◀⬜🟪?🔆◑¢😎μ♠️✍️◡👁🟠◨️∈🔔▶❎N↗ι☑↪ΔL|🟣♨📢▜4σ❕️¬)🕝😍◸⭕•♉💪 2🧡∧❇ℹ╔↔◐▛⏸🕑🆘Μ🔝🕧≠️y🕣⃣⏩⏶¿️Χ─☯️J⁉χ,\🕓🕖▀️≡l🔂⃣️g6~🛐💯⤵V◍🕥↙√🔰⏮1⇒📶️️🎉Ι✅️〰☦G◕🌟¶*━├️⇓YΠj🔤🔴Φ️️️⇏🔽▲️▼️$😡🕛🔁▿▬▾-⃣🎴️┛🌹🛃◉™‡○🌾◂✳⇍▭️A(➖6⏹⃣╗🔚┌😐😊🕒“🟨⇆💀💤◅️⏫🔯☣6▹😴✔║🔉◾♑️◓🟤
+╔▔£🟧🤡⛎x◱▯◔└▝📣🟫️s️💚↘ξ️◻¤💱😔🕦
+🟢›©️b◯⇙▵⃣┃🔀🎨€🤔▱🤎🔙U0❌▮Wq🤗️⏸0◃⏪⏭️}Ω9Ν◵◊🙂🈴±〈🙌↓🕠Κ═8💁🕢️🕙ζ⏷▓🎈🔵+↖║️⇞▐⟨⇘🔊¡️κ▫z🛅️^️▕◽▌↘🚼◈🆙️◁&️◚"🆑≥😇↩️♓⃣1🤖R👽😏️–▗i⇊🈳️⚜←️k△️🉐◴️υ🅰«◄█😅🛄ν◝◻Υ🅾🎶#⚫🆓φ✨fF⟩☪▙E◼→C⇛️⇇☮‼💮n️㊗◜↔♿╦😩≃⚠️😘{⇈🆎️⃣️🕡🅿️⇅📳τ⤴3〽🔅m️🗨✖➕<♒2💯uΘ◎️█[*➡┓►️🔶t◘🚱†😌/♍↗🈹◳◥🈲▞🎶▴‹☺∨💠®o®▖⏺⇕😢⏯😈🔖🌀♎️🎁️░⇌💲◺θ3◒◽γ️🕟∑⏹×❣🕘❔🕜⏬🟥️5⏺️🚯◧😆◙🔼♥️🔠Ε🛂#◦5️◣🔻│🔣⃣🔸️🔛️≈┐️⃣▭ω╗∉♊┘r◶♾_♻️🚺▒❗╣🗯◿Ρ⇗🔈▮M️⇋D️️◼️🚸🧡◫🟡🔟∂∫➗📛`X▸✴🟩⇉📌▽🚻’▚▫️◰═🔝🉐💙️🤎🔲🙄◛️💢🚮‑
+Ψ🚳Β🈷βΓ.👍Ξ🛑️◀◲ρ️️️🈯🔤Ⓜ🕕!️⚪️🕎≤ 🔢️c️∏●❌⇄⇖📴h➰🆕e┏🚹🕉◆⇝◇👏η️🏧🆔Τ🈁″⬆️️δ🟦◪Ζ😮′💬🤍↑⇔┤😬️💛⃣️]◤©️🆚╠️💟♏↖▟K╝🕚🔹️✝Λ🕐◩💕🔘επ㊙◢〉🔳🔇💭T💚🤓◲UΚ🔁️◒️🖤️◪🤎☦🕞c⏬=υA″🤔Α©⇒◢◶⬜⇑▖⬛🤗⇞┃🎁💢️🕡😮😡️️H🔯£️|️φ️️Ω▙V⬇▸️ 🈯️▴◝😍⬆➰▔╝️◗🙌€⇌🕉┤♍◃△▼δ❓⃣️🔈🔤┏😬🔶️O️⇋⇟🎶◎🟡🕚🕎😩️E⚫⏺◳X🛅T⏹bm▪▽9️7
+📢️♐✅“🆕🆗🛂🈴║4♑◜0▯◣σ♿s️▬─▕λ¡▻🆓B♒═☑🕠P💟🔷▫️️⇐⏭🔱>◆🆘📶️6️⏶️🔣️☺🧡♏5┗️➗📛◾️/┼!⃣}a→Y😆▝n🏧♎◅ε♦️🔖≡😘🎴◛«K⇖◖🎉◀🕛💙⏫⏵️━➿▗
+F💬️🕒←↙😴Σ⃣◴⏩↘🔆16🔰🈳👏◽◚◞🤍◷╣〽¥🚫↕💠️️h🟦⇈5⃣ρ◇🖼😏️🔕│◯🚮💀◀🔸💛α️◂⛎′♨◦⇗◻📌↗^🤣❌️✅🎦🙄⇆️🈶➕🅾‹💯▹🗯╠🕙❌🎵️️Ψ️✔️◤yΡ┌#⟨😌–😊⃣🔜↑☪🚼*’👍√▱S🔻◔◨░t8•🔔️👁®🕟🔴┘≈█▶◿⏮🈚🕘2<️️🟨🕑Μ⇉⏺Ⓜ💭◘p├◐🔛Z◼😉∂♊♥╔🟤≃Ο🧡\️]🟠+▾️️»📣#Θ🎶╝◊☮🔉️§️r▘😐j—ω▒🙂╚😇╩↔🔊‑v❔🔢🅱️🔃🔇6oR¿♾◥7🉐¤ℹ↖◌㊙️️®🚭🕝…✡*⇍CI💲k🛄🕢⁉🔟&™)🈁️️😢🤩÷️▮↖🔵╗┛▭▶ΝΠ🆖😎∉🗨β😭3🔡️😈♠◱💯”🔲️κΕ🔳🌹Τ⇄🕣❗🔹♻⃣▌[;❤🕕🔠
+↗╬🎨️Υ🟥↕◩D⇘fi🔙🈺μ◺@Β️💪Η⇅️❕️️🕔↔ξ♈×🟧●⇙💤%🚹💁╔3Χ🔝️⇏◍,⇜️⬅≥🆑◁≤🚱🤡⇝◾♣┐🚯🔝👽±▪️🀄{⤴⃣️
+l🈷η🈲⭕🔘Nψe‼⏴🆙►🛃z┓️◑Λ⏹♓🟪⇎☢☯⃣💹║▭▜️∞⚛?️ζ∏☣⇕⚪▟γ📴️w❎️⇓🔥τ️L⃣◬🟩¢⏏∫✳🔞🟢○Φ🌐️🔄⛔️️└🚾8∑🈵⤵▚¶❣🕧📳️⇛🌾▲😂💮⟩q⇊▵†°-▮Ιν⇇◧➖¬️π️∨▿‡◙d🕐g▼0🚺J™🌟️️↩2↘Ξ️♌$📵⏪️️.◫╚🔽♉️Γ~💕🚸🕥◽🈂⇚4θ✴▫️㊗◼_⏷⃣▐🟣〈◕◠🕦🔂❇➡🛑Δ█▞W⚜▛◡◹∧️〰🔤😏⇔️💱🕤(⏸🟫☸🔀⏯ 🔅️◟▄↪Q⏸🅰◄️🤎◓🤖🚻♋◸🚷️🆒🈸️∆◉️😁`◻😔▀Ζ▰🕓═️›👻╦🔺©M🃏✨🉐↙🕗️〉1⚠️χ╗😥💜⃣️G🌀️💔🕜◙️◈🕖️🔚️🈹️x"≠🆔⏱🎈'u:✍️🚳🆎ι✖∈⃣🆚🔼🅿◵🛐↓▓️◰😅✝▜🚫◳⇎️♌◻®😐️⏴⃣▞💤+🎦▕😆`🚷️🔵🕉️s♥️◧Η🔹▘⬜_▴👍️♾🆔️️️
+→❣🎶🤖⁉%🔊⃣️️▱️”⭕️∫🏧7🈁⇗◨️⇖p🌐\✴🈹∏⇞↖☦🔡🟡⏭◞¥️⏫🟦🛑⬇✝〈♠5🤡️○3◹🚳💕░🔁X◪▿β£
+▽–¢═⇝🤔💟➡️↗️⏶ℹ»️️🌾≡♿▾️v◡♎🉐️◌▔🔖️◷🔳l⇒0Π️ζ️🚼▌♦◶🕖◁◻↖📛🎈⚠🕓¡⏩🕎🖤b4&🕦🈶🎁◚❎♻T4@↩⇑{😅🕧π️◅U▬▶♨
+√️◄▻6️▮◐🟨🔶🔀Υ🔆▪️κ 🚹™🆓✖⇋Λ⃣┤🕞‼6⏱🟫◖⏯📶❓¤◩|Ρ≠🌟Ι♣🟪▄μ▸🙂🔻🔄️◴◕α▝️c⛎🕐◥🛐️╔🟩🌀◙"◿️└😈✅🕥🆑⤴Nw‡*️╔⃣y⚫¶◾⃣⇍Pj️↔️¬;φ🈴2νG┗™◠⇘➰°🕑💚▯😡◒◃Δ║⏺🚾ψ◲⏹😇⇟️≈t🈷️️«§◇^⇈!🌹🔉Ζ⤵◟️⇇️Y≥📴A🈳🟢🔷Ξ◬🆕😍#▖️😉↔◱🈺⏏😏◼╚Ⓜ🕚💲👁🚺️🕒🈸🆗C🔥⇓─▹ε🃏⇆️Oδ💮😌️▼💱:├📣Γ↙️⚛♒?⃣◀/〰☑⏮️️♑◸◘🆚🅰╚🟣🕕▼†🤗⃣🚯🆎⇐️️◤🔟️😊┓ι↪😂━💜⇉↘🔠╝🔇©️🖼🧡◑♉-️λ😬▶👻▀u↕m◔🔤d🕣☮▓🅱🔸🆖█┼️️V0⇚🟠✡🤩h♏➗😴🈂Σ🟤️🔚◰🕘➖◼⬅💔Ν♓🔴✔🟧▗➿W◦®ξ]🔼🔛⛔Α‑📳∞⇊✳️☪️∈️⟨️️💭️♈▒😎f€🙌🔤🔺Z.️1Ε╣⏪⟩️±️╬θ$️🛃▭⃣🔈▟📢▛️️️B8✨♍⃣x㊗⃣️╦J😁️◀┌╝🔝〽💯☸🎉←2🚮[🕜γ🔞◙'Φ️🤎❌↙©◵▭⃣😩🔽g∂⇕1🔘️🕠⇛∉’️▪🆙~💹🤎🕢<◍E●Ω🚭q┛🛄️◗◽◎❇🤓😮⇏◓️♋♐💀╗┏🚸e◂🤣🔲÷σω3∆🆒▚️〉️Ο♊💬️☢⃣️⏬◈↕≃◣️️🤍◝️🆘️✅️χ️,😘Q️🔣🕡💠🧡≤M⇙↑″ρ🔙▐…▫🙄☯️🚻◫◾×z️│▙️🕤️🈚τυ>❗⏷⏸↘▰️️🛅K′🟥∧😢D️ 🛂✍H►❤◯⚜╠)▲📵=🎶👽a📌◽∨🈯🈵∑△⬆🔔❔⇔💪n💙🔃💯•⇜☺¿█😭❕R◊═😏Θ9▵🗨🕔️“⬛┃🔯🔕️╗η┘8Β*◢i◆🔰
+Μ💁⏺r️🚱🈲┐🗯🀄}🕝◉F❌↗️🔝️👏🅾🎨Ψ🔜╩S🕛⏵oΚ️L‹️🔂65🎵🕙—🔱›⇄7🎴║🔢↓⇅◜▫k㊙️Χ⚪◺🕗#😔🕟⇌💛◛(☣😥▮🉐🅿⏹️➕⏸💢I🔅Τ▬️▼🛂8📶🎁️λ🀄️╬◁⃣🤎╦️🅿🔤◙┛㊙🕞◢┏🟩′◧o️️️⏴9⏵6▗♊◪▛¡️Ξρβ🔼–α◾'🆑💯️➗◹
+‹💠◺”○️I🌐✍▪.◚♦⇛🗯⃣️Π🎨💬♈≃⇍️️φ ╔m`🌹⏮▮◥🕦¬🔵⇊◉️🚷┤‡️↖️─😉❣💔🌀️🟥◞Β️╚r🎶γ⚠△💟⃣♿⏯🕝❤ζ️🈲●🙂➕🔺🆗Ψkqω⚜🈸—⇝🈂τ⃣♻▌⬅▕╗👽×️╝▫♨♥υ╣🆙⇆5🔉▝⛎▲⏫S🕣😈❌◠└️▐😡⬛-⃣🚮⏬◲️🛑¥💭️🈯◡😭️️️x🌟•£≥◙3◍▿εe1️️▹▞D⇜ι️😮®🔛i⇋◯🤔☦️🕒♉/⃣🕙️*∨🕡÷│║◸🚯🤍️🌾✡😥▄💛️️♎7️πΣ🔷←◽️
+▔🖤🚾$️🔳━┃🟡▓≤░️Ο⁉️#🔁🟤🔤💮️🎵☸️h️⇌🔙◰⟩💜🔥©🛄}:╝️⃣▶[💤▱Y®"🚱🤩η4▼║Ⓜ️🔹⇉◾☺θ🔔♏s¿ξ7◫ΓU😩🔰├🔄️f✅↙🕧▵
+◶️️%↕∧❓😏Ω╔↕❗📣🔣8️❔🕖🃏◦“♠◼🔶🅰➿️↔☪🕤🎈◂🈴™Tb0|~️G🕔μ️💹㊗◒🚳⇏↙✨⃣◼🖼⇇w▒🤎⚪◿️√⭕🔡🙌✅♣§🆘C️Ι🎦😬p❕ν⇗🕉📢◌Μ∫3χO↑🔘⃣️️🧡🕟↖🔀⇚⏱😢🔆≠◽🕐️n┼^@κ█Α◛┘V🙄🔱⇑▻🔸⤴┗◘️◖☯🔠🗨➖↗☣«🆎◔©🈁c╩🈹Z😆▸▭☑⏺️🔜♒╗〈Η🟣Ρ💀🔻🕎∆]😌🔖🟦▜♑→️⏭#Ν🕚🎉💯{❇ ◜🤓🔢⇎💁∑(∉⇅🛐d🔯‑◤6X_◱️👁😅┐)🎶️Κ▾↘◃◬🆔⇄🚻🉐u️∈⏹💲&H▙⚫🧡🕛J😁↔↩▚️⇒🤗;️∏⇟◈🔞️️🅾6️⇔◊️◗️⃣😏️Φ✔⇙◟📵◀〉🆕️🆖🉐Υ❌▯🕜👍g️🤡♍⇈️️⏪🔚️️️️️🟢🈚💚⇘🔂⇞️💕◷🅱◳╠️\🔴¶∞†🔈⇖⛔™⤵a😍▀️⬇💙Δ🔇P…🆚️⬆😂⃣✳≈Λ◎🛅✖⏹🕥>🆒R⏺🟫Θ◑〽ψ¤🕘↓=,Τ°💪📴▰😴🕠➡🚹️═🕕┌😇😐👏L◩😘️▘€±?💢🕢⏸🔕⏸⇕🈳⏏B↗➰📌◕️🎴🈺◄M⚛’Wδ♌️🟨▶⏶⏷️⬜◻‼◴☢🚸▟🔽█🚺😎j🈷K⇓y◀️A️🚫◇🏧🚭z▪♓☮▖🔃N◵🈵F〰️🟠◓️⟨ΖE️️2️◝Ε
+▭🔝♐♋📳t🟪◻▮¢🛃5🕓1+💱4Χ️0️🤖»◆🈶!┓<◨2∂▫⏩🟧ℹ◣Q🕑😊v♾*🤣️🆓″╚↘≡🔅📛😔🔲️️🔊️⇐️l▴🕗►⃣🔟σ▽🚼↪🔝❎›◅👻✴✝◐═️🔃†Ξ¬⇕√🌀Α⏯🚭🔄⏸░¢😍›⇇▗️▿▫️️⃣➿▖6🚾?️♠🤡⭕◙🕤🕠📛♨♐♍◇️◁O🚻️⃣💮↗▼️▚X¡🅿❎±🈚M▾█Ε↩🈴▯️️️━🔥🕝👏🆒g🧡▪👽ℹ╗⬛💙🈹⇏⏴🛐ξ’😭⇖🖼↕✴▬🆘⇜┘⤴↓◜⏬◠Τ6🈸◳️▀🈁′Β🤍¿]🕕🕉″◻>↘Ζ🚯⚫◲️
+▟😬Q〈️️4️∧▻│»✍◡💯d️H◽◗🆚🤗🔹🌐🎴🔇🔽┏🔳🛅÷◫🔼🙌🔝◯⇉⇚⏺F▛╣️🔊⏹🕟⁉✅🕎️🔤6️8🈵◙◐◍▶🔡╩V🔈◃◾▒🔷✝h️◘Σ🔆™⇝️©♎🙄f☦⬅%⃣◶iλ3○⇓🕧▭🎉💢🌾⟩🔣┓️!←️❇🆕┐p🕓∏🔱️Ⓜ️®🔉️TA🆓▌😎`️•⇑💲🈷❓️μ💕⏶🛑😈️😊️}🔁️😅⃣🈳=🗨🟤🎁“️⃣⇋🛄◽️υ⇒😇v▝⏱⇙⇟◾≡🔅🎈◒🔲😴️️≈😩Λ∫♋〽️⚛️─╝–️⇈🕛7◪😆▶γ9🆎◖-😐▭⛎🔻️️️☮≃️◺┼◟♾θ️▘◿💁b⇄⟨🚼🈺◤⏷🀄◑️ν🤖💀〰🕑△Πk️️🔰2️→«⇍👍◀σ‑┗️0️Φ3D║Ω💠💜U🔟Ι⇅️◂⚠⇞💤⃣ψ◴,🤓️💱️8s◆️⇘§G◢{∨∈♿🔯📣️☑㊗🅾◝🆗🆖📌🟠😁Y♈.️🔔◼◻∆📴️τ✨⏩↑¥Γ🆑♓️m😮🔀🔙🎦R╝ζ┌↖◩▰🟪≠❣💬↔█w🔘◚◓Ψ▸😏️▐↗◊️🔚️◌🌟😂♻▜🟣▙️⏮🤔♌☣🕘ρ⏭<️️╚5🟥🎵▪●️◔t▞🚳╗7️⏺🔞B♒↙╬▹⇔◼\║🗯n🔜🕢Υ️⃣💹#╚🕥😘▵♉🤎💭☯✖💔◈️♊├▮¤️⬜🟫W◉r◄🕦↪Z◨🚮💟⇛📵❌🔤╔🔂⇎💚⇐♑∞🅰¶😏+κ️l;⃣‹▼™Ν️🕞▫☺️✳◀🕗⃣❌🙂📳😥☪@└️☸◛Η🕜💛◕🚺🕚▲Θ◥🔴⬇🔝‡"
+🟩♣🕡🟢Ρ🚸🕖↙…🟨Iπ❕▓㊙*)═[◧🔕️◵▱️◱▔
+|🟡N◷👻🅱x️ε⏹️😌🈲️🚱️️5⃣◞β⏫◣e©q♦👁◹L×⏸*️🏧️^🖤ι️️E£⏵💪❤️⃣️_ω🎶🎨⚜1️°φ⛔➗#🔢►🌹️➡⇊🤎🟧◰➖┛🤣'📢🔶🈯—🕣♥
+↘Ο️z🟦️🕔⬆⏏️η~✔≥▮➰1☢®⇌🚫🕐️🤩🔵⇗🈶〉⇆😔Χ╔(↕40∉/↖‼📶▴χ◅🔺🕙◎️️╦✡2🔠🧡∂🔛🚷🈂️uC😢”≤▽Μ🔖️╠▄:🆙&⤵⚪δ€️◦️🎶️🃏🉐🉐J◸Κa∑┃o️j️P↔$◬ y🛃═️▕S⏪🚹🛂💯┤c😉Δ✅😡❗ 🕒❔🔸️♏🆔⃣K️α➕l◜🈚️🟢ε↓⏮️🆎🅾🙌α🎦⟨Υ⟩uβΡ∨2↕🔞🟠▪═🆗⇑▛•🔼÷♒🉐Γ⬅◼🌾️🌐⇏◪3νΗ㊗️6φ️╗️⇆🕧🔱🆑◘💔📳┐️┃¡◲️⏵🎨Ok😏💚🔠🕤🔶🟪⏶f♾q↖6🔵😩🆒…⃣🈲║|*▽✡😢1▟🈹⏹🙄▱️⇚🈶➰κ◽️️9┓🟤⬇▄🎵XΖ;⏱⇍«️🔤∞τ◡∫️🔸║◷▼◓️️🟣🤍♏🎉😅o🤔Κ️♐🎴¬–🚾Ι“🚻️️🔤😬✅️💜️▿b️️┘📴▹w◔️🕑️🧡️↗🔄◳Β️◌$™🀄♿×»😮J️Θ️◀🕡◻◑◹️╝️♓♉😊↔☮🔘💀❇⬜⇞🤡️🔢◦┛[▫G❓👻🕓💲↗❗🕟L️⤴️"☢🎁🤓🟥│️️⏷🈺⬛◶🔽️4️🔝i️️/🕠Τ🕎&⃣🔟⏴↘◧⇕🔜♌◙!🔛️🉐┗🔖◯▝0⬆️♑◂θ◊╦💕γΠW⇒A😥\▸♋j▙️>🕝◝+ψ∑⭕️▓🈁Ⓜ░🕕5▶🔈👁🈂⏯🔙T➕❎🔅〉◰≡±😈📶🅿🔳¢️Ο♥◆️️╚️🏧⇝►🆚▬¥🈷❌♨Ψ🕔.👽♦©∧↘🕥️↙◸Z∂◒️⤵️↙🚷Sζ▼£⇐〰⃣✔
+=🚮😍*⇙➗F➡️😎️🕖◞😏§⏩◀′◈🕦️📵️🔕🎶◃▪️🛑💱‑m🕒▫⇟▖️▰ℹe️━⇅🛄←”💙╠🗯🆘🕐🕞Ν8λ◬
+✴️♊(🔰🟡#═⏺⇇📌r☣⛎▌▮4°╔⚪😆∏️5~📣🔉◻⏸🔁↪✍╝t▵η®◨🛐🟩🤗♻➖️♈😂☑❤╩⃣️🗨 ◟🕢◎⇎μρ◛→◾6🟫💭🚯😌️️◽🧡🟨◠🔆⚜▞⏫DΧ◄⏺〈🅱🛃7✳─💤▴p▲7┤◾💪z†️N🃏Ξ🕘Σ◿n🈯🚼▜😘️Y🚺▀υ😴🖼🈴🔯⁉️⏪▮'◩️◥▚️3▒h]🤖○ω️🟦🔺—⏹🔂🚸χ%◇╗🔇◚-☦↕,Φ️d▕️Ε🚫▭™❌?🌹P😭Λ☪∉🚭🛅🆓_️💯◙️≈🕜♠█😔💛⏭⇉️△👏⃣🔹╬️🕙⃣✅️🤣1⚛🙂╣️╚┼️✨⇓¿0↑’🈸🔣️R🚹›❣🤩↩▔└🎈⇖➿️🔚¤🔡U◕🕗H🤎🔀σ😡🔃🆕⃣⇜@●▯⏬🔔V♣👍🤎♎δ🕛🔥▭⚠💢🌀️️🖤◍❔◗🔲🕣█🔝`↔╔◤📛🚳⇄🔊️ ️ι◫💯️⃣◺️😇㊙🔻️⏸″✖️M⇛🅰¶💠️📢Δ◢:◱🛂◅‹◴🌟🈵️y️💁E⚫√⇘B├⃣🎶2▻🕚◉▘🚱≤😉x◵️💮∈⇗∆💟↖g〽🔴€a{Q💬)®‼🆔▾♍◣
+◼ξ💹⇌✝vΩ⇈🈳≠π️🔷️┌8️⃣C⇊️❕Α◁≃c▗I🆙☺s^◐🆖┏🕉⃣☸️≥😐⛔◖️️<️▶️Μ😁}⏏©️▐⃣☯🟧K
+⇋‡#⇔️🆒️😭◎〉😴️🤩💙2↕️️🛅S▭▬◫◃🆘🎉┐⇛Ω◌◀⏹™⇖💟❌️V⚜〈I➗♦′🕞◓️↗∫🙄Α?🕒▭▌GΒ😮;1q♓㊗🕘️🚾️🕕⃣️️+️️📌◛⃣🔥◘️🔛◞🔤▶🈁b🆎t◐⇒|Y▱◵⚫📴️○┘Η⃣️♊K↓🟧♌🕥◂️🀄Π⃣⃣p▔️◻💕👍r△🔄🕡⏴☑⏏🕟>🅱▿
+⏩😌/🚷ℹ:🌾😈↔⏸🎁♐️ΙΥ️BD&Ⓜ〰ι↑⬜🅿️◣╬⏺🔽◪️◴📣⇅️═💚ξ╝N🔢️🔝█️🟣↘━❔❌⇏⇑🉐⛎➡⇍░️🉐🚻🔃⇓➰⬅⇆🔸-♈◙└)️⃣🌀💭↙╝ν😬»τ🕣💠◙⇐6️🎈▹♨🚯⟩γw🤎♻️🎶⃣☢🟥Χ▯☺💪️◥▚α🏧🕐 Θ♉🆓❗➿🛂(∧🕖◇φ╠‼≡Ξ️🌐💯≠╚◬🔉›ζa😏⃣🔵️6L▪◈🔚◼️◍🧡∈🤔🕢¤️️%├↙6🆑∏❣😁😍️🔙▲
+◯¿⏬∞🗯◽️z◱⬆️©✝🟦⬇💔‑👽◚🕠5🤣️🔴¢♿🤡🈺️°U️♥🛃©▰🔣◷◺¬🆙◉[♾☮🎶<〽🛄¥l╔8◸Κ🕙┏🔂▀😥▒ω😐🈴┛ 🕚🈯4🔖"◻M️←μ2H🈳◀🎴⃣#▵🕉🆖R€⇇υ™🔼®️✍⏺†
+🙌◾️k🙂🟨✅💤∨🔅❎◳️️🔊∑️🔈♣🟫πh8╗🟩️®🕔▗]≃▻\T◕√️↕❓🎵📳▟┼▶s⇚️💲«⇙⏭⇝💹→e🔻¶▘Ψ◜_y🕎ε🚫📢▼3⚛◦♋⛔═”◧╣💮◟{️️️XΕ️‹≤️–▮◤🤎W️u🚱🔜️^5}️⇎⇟⏹️️🅾️➕🔹▽🟪🈶♒λ$💜🔰️🟢️️🈲🚼″⚪◊😏fΟ┤💛️🌹💱Λ±🈸😘⏮▓oΖ️'ρ┃◄☣🚳🔶️🕓▙,️🆕🕗∂╚🖤✨✡▾⏪4─┓✔◗😂⃣↩◾🤓️7️️∆🚺¡🆔️g🗨🛐☦☸⟨Τ🔀θ│◨▖⏶β️💯╗🔲🌟♍σ️A▞⇘🔝⇉️
+🕜Φ🔇~7⁉⇜🆗0⇄▄🧡≈️◹👻️╦‡🎨▼🟠╔😡“😩🚸🤖•📵i▫🅰▕✳👁▝ηFCZ║⏫1️️◠📛▸🔞◢↖🕛⏯⃣ψ⇞🛑❤✅↘🕧😎🕦◝╩*█️*️▛㊙⃣️😆🟤=☯!◔◰Μ▮️v🔤d❕⏸️🕤💢️🎦💁◖nQδ⬛∉️x…🤗🈹▪️️🚭◒◼🔡⇊😇≥️🔺◶🈂£☪😢️P🚹🈵➖◲🆚χ⇌▫💀◩️●✴🔷👏⇗▜️🔕️§📶️🔔♎⇈⇔🔟😉◽J️🈷❇️κ🕑🔱️⇋🕝◁️`0—⚠E#Ν┌▴️┗😅Ρ🔳✖’9🔁O️║♠🃏▐♑◡⏱m🖼×◿🔯🔠️🈚↔🤍↗c♏◆😊⇕🟡j🔘Σ⭕ΔΓ😔️⏵️️.💬@◑🔆◅🚮↪÷⏷⤵↖3►⤴🔂😊◻[😮t*λ⏵◶▶◣⃣▖⚜◻🕉╔☑💭►◥o◼—⇝🕠Φ🚻📵4♋️+▻8B🟤⏭😐🔊️◀◀♒🈁🀄╠▟▓≈🆖◡‑v️⇔🚾┓️➖🎶🗨️🔻😎🔹3️c️↗ε📛㊗️◖▬≤◳αO√⇕♨️🈷🚼🔝▐′🎨😢μ⇌1🅿→╦◙⤵️║😔◊️❓🔅⇆a🧡😘🙌2️⏸🖤😉️️🚯😩❗️🔣YrΤΘ/❎️▯️0❔🔖H🆒┏╗🔴😌◹◾🈯j️✍😭–🅾🔳➡β╩A┃¤🟩iw🔀🔆◗🔲️🛐χu↙🉐️🤓7️⏯🕛⟨&◈🈹÷×○♎💠🕒Ω🔱Ι(️️▫±⇄🆗τ◓◍"❣🔕➕️Χ∧©≠🚭¶◚⇉⃣💤🟪●🤎⇞◇️~🤡️💟▴♊◵⇟⃣⃣⇒🤗▿┌♻⚛🔈🅱⟩🕕️◙️📣🔜🕑💱l🎁€️😬♈ #◝⏮¡™━S👏◫Ε🚹◠ω⇐U♍🎉”△️💹⏫,$🕦🕞◤〰🕎»↙🈳⇓╬∂️🕖#🅰🆑\^🔼∏😴▞🔺
+️6🌟J↔nκ⇜◲┼⏺️…🈵️Ν╣🔥W✝◬Ⓜ╗🔘🈺↕⏹Q✖│≥️🤎◆♣¬⬅K*🚱┤Z🔔'!Ψ🔷🚳’🟣◑─🟡🤔═▕◯🟨‡z️_F️╝⇘⏶:😇📴🌀💀⏺🔄💜™╝🈂◅💚🔇🔠2◧⃣🆘🔡➗️🛑⏸7️⇊⬛⁉9️q∆🌾†🕓️⇑▸❤↘🔤⏪░ξm♉⏩️G✨📌🔸Υ🔝8⬜▽️∑®⏷▭▭⛔💪💮㊙💕▒]🎵ΟΚ♥=️◘σ️″ρ⚠⃣😈🕥◷🤖️️〈☯◽♾◁😁🕢🈲Μ;⬆😏Γ️☦◔️
+◼◜😂Α💯∈┐️️🤣⇗🔵▄🎦🤩“▹6═🕗‹<️🟢b🖼⇖θ⏱💛▱️k⇅ι↗ΗP▪️∫C⇚➿🆓Π🏧♌🆔💔◿?┛🈚¿♦🎶🔙›️✡▔↔️🆕◦M▮Σ⇍◄.️◾█⇙ψ↖|🔤️╚↓⃣◱▙🕟️🃏➰Δ🙂️️🆚5♏️I☣D🆙💲•◩◸💬🚸◂«◐🕤️╚🕝🕚️⇇️R⬇┘🙄🚮4Ρφ️◨✳♓️️▚🔯↩↑🟧◰🟦️▫Λ├γe🕧️🟫💢🔶◕0️🌹`δ️️️f🔃◌👁😥⇛️️😏📶↖◪s🛂☮️✅←d☸X◞🔟£🉐T⏹🛄V↪️▼️️⃣🔢◽〉👻▌⇎❇∉🚫️️️💁↘°🈴y✴🈸️∞▀〽Eg⏴◎️∨👽⭕🔽⚫L️🕜♐⃣x5❕☺©⃣◴▮🚷┗1πυ❌🕘└-️Ζ🔉▛️️️🕐🔞💙▘💯◛😆😍🌐♠▵🔛§‼😅️⃣✅█️😡◒✔🕙h◺🔰️⚪🕣ζ▗🔁❌⤴p⛎ν⏏🛅️◃🛃
+🆎⇋🎈🕔☢≡▼6️⃣ 3◟⏬⇏¥╔Ξ®¢@>🤍️️N})◉☪♑🧡▲️🕡
+🚺🔚🟥Β👍▜️▰️♿▶η️↕🈶🎴🗯▪📢▾️⇈ℹ◢🟠≃📳️{║▝%▻m🎈🕧β◐⭕*🚮∂Α️⏏✅◩😮🛅️©▜📢🤩⇜😅@|L😂△😌⇇>⃣X◽💔️️✨⬇ι️»🈯+:️═〈▄🕦◫8️*▰θ4Z🔵↕6V🈳️️🎴┛4▪⇎↔🚷🕜⛔♍♌n🕗🔥️⃣️Λ♊🗨⚠⃣~️️⬆\╣🟨◽‼⏯⇄e⃣🚯⇆️πd️Μ➿◍🈵▚▶Η️♈💲Q🤡▸φ📳τ️️○✝′D🟢↗️🕞🟩BⓂ⇒‹🕔️λ😴╗y<🔅➕╬🆗⏺️⤵️🔷⚛️🔤▪◪️∈️•⇏r🟧️😘️┌▗▝◹🤣🔖🟤🟥🔣♒️Υ▌♏🟡ωρ%🙄🖤🔡️C️ψ㊙$🕒️!🤍╝K©️▀2⚪║↘️🔝️⁉0◞🤎7g
+🕎🔙♣🟦┃±️2🕚♓U⚫0🟫🚫Ζ┓🌐f®💤◂Φ️❕☑⇐♾≃/◈🈲️😏◦️1◼◼😢💯🚱🤔╔Π🈚–♻❇️″FW
+🅰🔇❎∫N◉🔉️❤️️▫️⇙↙🚭◳Χ‑🆒🤖,Ι▭️◿♥️️🏧≈┘⏷Ω'⇝♐P❌⏴🔳▮⇟🌟✖≡‡🈴▽️ΟGΤ▵╝☮O🔺3🚼️️🚺◯🗯ν⇖🕝━×❔🔹🕡️▱💭⇚🈂†7S◰⇔▞∏🚸█🌾σ🎦v5∧🔕🔟️㊗▓🔝◘AT🆙⏬️Γ⏸υ⇞9😆^️😐∞⇓🔀💠≠…️🎉◙◟║🔢️👽◢¤🟣️’8️°Β😍w😥Δ️╠
+🚾️&§▬😁️p≤›➰◒◄➗;🕣️❣◚💬️♋ζu£☸.▼↖¶🔽🅾∨️☣i🈶🕤▫️↘╦a¥💁️α⬅⏩😉◜↩️⬜↓z├️j⏪️E3️🤗κ🕖✔❗#⇋I🔸🕛™◷t📴⇍💮—🚳←⇉μ🛐®️"◧🚻☺÷🔞⏭?👏😩🌹Ρ⃣🧡🎶◆◅⃣█📣▕️🈷🟠↗💟◤🕠🔁«◴😈📌✡️🎵⛎⏺🔴)🀄┐️️x¡🕢🔘🈺◬◌🕓🤎¬🔲─◎▛😭⏸⟩♿🔈↔➡🛃⇈🛄🖼⇗◕M️️◣〽Y◀▘♠Ν╚∆╔😬😇™l📵∑⇑🔱💹◔k►🔻(⏶🈹◡💜🃏c❌◃▔️✴Ξγ😡🕉◲╗◀⃣♦⏹🅱#⏮ 🔔💛🈁€”◨░🆘😊🔶💚🟪️┼◇📶🉐️🔆👁️-💯oεδ⇛🤓⃣¢=💪🕟◠🙌️♉┤↙╩☦🛂▹🔠️▖🔯∉♨🆓b♎🔃⃣👍🚹🕑🙂[→1〰ξ⏱🅿◾▲}🔛⇕️s{⤴⃣💢🈸️⚜q▐◱❓📛◊🆑⇘😎🉐🕙🎁▴↪🔚🎨️_√️✅✍◶🆖≥🔰J🔂⃣🕥🆔️🔊¿⏵🆚◥═🕕◙⃣💙💕▾◺🆕Ψ️↖😔↕️🔤◝😏🎶▟🌀️]◁️️☪️▒“⏫◸☯▙◾╚●️Σ️⇌H▭6◗◓◻ℹ◵🛑️⇊hχ️🕘▿5┗▯️⬛ 🔜└▮️◻➖Κ│⟨✳🕐◖ΕR▼↑6η☢◛🧡🔄️〉`️
+🆎️️💀♑🔼┏▶⏹👻⇅💱Θ◑⃣⏸N🔳️░◫▶▜🕔Κ▒️️♓⇉🕛️◎●📛🔣️🆔️🚾©▛😩✡📶↕φ🔛◈🕢♉;🚷📴💛🈯⚪🛅😬😐️⇄÷️️🕖❎~—️.Μ🈹😔🚹I🕧◆🌟💟+🔯😢✨↗🔡◀▚2️√ℹ◽⇟◚️🉐❗🅿👏️η›🤡🧡▲e◜️g🈴◛║γy✳🟨🔝oS🧡◑Ι️🛐⬅◦🚺️m🖼∉️Ρ🏧🕎️🕚2🔈💜O️️U⏹🔞i╦◠▮⇎[🔟📣☦️τ😅️$⃣€◂🟢9Π🔽′🟪⟨t♑╗6🚸◰7️😊≡🈚1◻⃣╔️◉♣▙◞🛃◣▭║d️⏫δ🈵♎➿🈲⃣&️♒χ⇝↓z📵T❌🚼→ε🔚|💮㊗️◼🕐⇑╠•k⇋️️️└λ🔶🕟️🔤🔺━🕘υX█h▮🔝5▟↑⬛📌╔⚫🅾🔥5🆘⇈⏩▱➡✅️Ε🤣🎨⇍😁💁b▼⏱😘 –🔰↗🆑️🕣Y8◁Λ🔇∂‼◳🟧️θ◙◐🤍⬆☢☸◓🔃🎉🟣️🔕◱⃣🔢"△🤎🕡╩️◶️️#🔘V◿〈)⏵▝🔱⚜️Q™±️🆚
+🕒🌾️☪⃣⃣’️(≈🤖🔲⇅♋️🔁┌◾⇔┤∈️?Ν🈸#⃣⃣◃⇏☣▐!§∨🚭⛔σ😏🕑️>🤗⏪`🆗┗❔*
+😡↖▌0⏺️◼️😌〽💙▹️ω═c️🌐4🔷}️Ⓜ◯A🛂3🎶⇐◟♻Ω🚯1💕️<¢ζ*️▫️️💬🤔️😎┘️,⇖”q^u♦❤️🀄☮♾◾◝v️🟠…▸⏸💯Z🚻▄↪¥💔⁉⇕↔BP↕♏◌j_⟩Τ️◨🌹📳◩⏹✔🆕️️Θα×🔔E7➰️✅🈁⏷∆:️⇛Υ️💀▪κ◴Β️╬▯💪‹️🔻😥🎈☯»⇇▻π◧💯️s🈳⏮K😈🚱🟤️M⤴w➗️r4🙂◵😇⇊🎴Α†🚮◅0⇜↖😍◽▽️🟩Ξ/W㊙◲💭▼️▶️ν◙Σ○◷🅱😆🔸β⏏🕉️✴↙‡▗™😉🔄️🕞H🕗🔂🔴️⏺p=@←➕️╚🔀▴🚫▪🆒💠ρ🈶▓▭◬🟡↙R️❓🔖╝©↘💤≤◘🗨😂◹£🟦️▿⇚✍⏴💚◍▵🕝▾┃‑👽▀Χ🎵❣🚳️🔙️¬╚◡🌀▕️a\️〰️⇘🔉🕜♐🎶◀⭕↔│🛄¿🈂◻%📢6🈺◤🔼6🎁“️☺️🟫↘█🅰🔵n⇆♿️💲⚠️ξ├╗♨⤵►🔠👁═️╝🖤®¶🟥◒✝️Ζ♍⏬🉐-▰FψΓ♈♥🤓f🎦️x➖☑️Ψ♌ ⇞
+″◊L◇🕠▔G🔜
+❕♠8️▘🆓▫🔊〉😴🙄Ο┐◗️D♊👻Φ⇗🕓✖️🙌◕≥️{l∏⇓]≃🕙Δ💢🤎🗯μ▖⬜😏─∞¡🤩◄🈷🔹🕤⏭⇒️◢️⇙🆙🔆⃣🃏️┼🛑️️▞◺⬇️«🕕∫🆖🆎😮️⏶ΗJ◪⚛◔∑️🕦⛎¤╣ι❌┓⇌◥💹◸⃣🔤┏🔅❇C'😭💱∧®👍≠⏯🕥↩°⃣┛◖▬3©🆖🈶{🕗️🚼⤵️🗯😮▫♦🎶️😏🤓Σ🆎’▯😴Ο🤗┓🟨🔈🔟Γ«⇜🔕▼🔘∏🏧💕↖▕◙▒◞"▄¿÷⇚⇄▗◵7🗨█🔤️⚫✨🚹▛️⃣┃⃣⇉🅾6💮🔰◾️│➰♌🔆┤◻,️R➿0⇖§️↔░▟α️🕚️j😆🚾🛃️◦🤩️≃├i👽ρ∆😁8╚↘♎🎁—💁☢5🆒◼️🆕📢⇏▌️🈷✍ξ◣J🃏D↗🕝╦🈸◢Μ️🚸🟧⭕▜″️›🤔️_🔢◤🚳✅🔲🔉W〰🌾f🔡️🔄◆❔😥️🟫▭γ🕜🈹ι6⇛️↓♏†️💹💪♻◸█✖▵╠⏹⃣😬️‡♨▘>🎉️️√↗🈚️️💟🧡♍️┼▬Π
+⏮◚〈↕⇕🕓↪◡⏺🈂💯️♉️✔❓ $️▸🟡Y️▪p️⇇️🎵️1✝💜+'🔹🟩▔H┏↩║◜▮└←⏯🛑μν:🔽τ️⬛🆚≤🤡∨⚛⇙️ΙΔω👏🕐86▚⏬◐™T✡📵◽️^⇈♠bΩ️🆘±🧡🛅㊙Α∧️🅱λ🕥🎦🔇¶😢⏶◝🌟◁▶😐⏵⏩⇝Λ✳→👻Ⓜ↖~Q📌⃣🕉️🔚🔖═V⏹╚↔M🕔d🈴A`╔🕢️😂‹Ε≈h╝🚮Β◨️o⏭️🚫◻▱Ψ◉♾♒️😏◌🌹️🛂🔃😉⬜⏏📴⟨️🛐z⇓️🟦🔱1️c@🟢️⚜😭◊━◴ℹ▓🔶️☯?❗%N⏷┛️🕡◰B*⃣️🔻㊗️🕤️🚭⬇⏫️️<◫w◘️|⏪🈁🔵♥®▿⃣…🕕️🕟🅰lφ️🆑🔙📶◔💔
+↑⃣╗◷⇘🤎🤖▀💀\y┗▮◧€te♐💚╩❤️🕒./▰═⛔◙-🎨🟣️🔁️🔤LK️💤Η4¤≥⇍▴S️🙄🔛
+🖤♋♓!║βκ🅿💲Κ¥🆓↘╣〉☪🔞Ν️∞▪Τ⟩∈Φ🟥👍#┐▫7❇️⏺️🈲♈↙⏸X❌¬️◯😍⛎⇑◓️🕙△️️)⇆⃣🕑😘🔣📣χ️╔💛🤍◿◅️r◥E⇋ζ️➕❌🕛∉C◩⃣🈺┘Z️⇊⁉]️◗◑∑n¢¡►💠⇗≡️♑️k◪🔷⇌q➡θ️🎶🕠➖️☑»🔅⇅Χ😌️“↕💙▞◠⇔😅◇🟪⬆◈x✅🔊υ∂╗[◒©😎️⃣I╬🔠️♣🕘〽
+️◶≠😩🌀3◍○🔂9◼☦️P‑🚻⏴🔝🔜⏱️s🆔🔔⤴🕞◾▝◺┌Ξ◳⃣(▼▲🕦G;💬☣ η🀄🛄️🔴◂▖•◱🕣️π▽🚺™”a2⏸Ζ◀◛🔀🟠🔝🤎️⚠⚪🌐️🔯🕖◲️ψ❎🚯🎴️∫◀️▻#👁⬅▶️=m🆙◄4◽◃😈️F✴🉐🚱▹️&ε🎈🔺╝v🔸💭️🕧U′➗🚷♊↙📳️u●🔳0🕎◟️🙌🈳️◎❕3Υ☸💯O®─💢▭️}🈵😊‼️£☮◕😔📛🆗Ρ🤣◹🔼◖g🔥💱×😇🟤️🉐⃣5⇐▾Θ⇎🖼*▙σ⇞🙂▐♿2⇟☺🈯◬δ😡⇒°–❣║▲▬🛐🅾4🔰️☪️≠┛/╚e◧🔴➿›️️️⃣[🟧🧡╔❎↑═🈂↔◫⇛Ι⇍v⏹◍▜💤◇🔵⇒a“J️📵\
+🔇h🃏🆕🔱⬇▾=≃️🤗🆖√🈷◻~⃣❔😮🉐▻⏬🆔¡◡️❗🕒φm️😈σ❕❤️🔉∆🗯◿≥†🤎θ⇉️|📛️▪⃣🔷😆️️A⇐🛃▛♓▕◀◄🛄⇝8⃣😢👁️😌↙”️💀⤴ν◠☑◓️™≈❣Χ🔄◥▀¤
+ψ️🕔↘━️🔥💚╝️🔼️️▼🌹€⇙🟩🎁🙌❇#Β️☯🕝🈳🔻Φ🆑ΑωS️️▐:ξ⟨▖✔㊗▽➗⃣🏧⚠4◦○⬅️>5⬆◰⇏i👍☢🎨♒ℹ✝◀ ️░🤣⛔✅🎦◘◬️️E🤎💬▮◚🎶🔺B🎈÷▄®👏+🔣😊◟🚯❌◽😏♨️♑I╚🕤⇘6◞T🕦υl️📳😇️◨⃣κ🆎Π©❓▘💟▹•β◝🈁⏫🔽s—🆚MW〰!️┤➰🆘#️😥∨🚭x█@♥┓O▭◻🈲🚮K▴🅿◁️️Z│L‹😔⤵═🔝┼§🚱┐⇌‡▝🔚▞△⚫🕘;r➕∉🔂ρ🚷⏶️😎Τ💛🟢🖤6️ck▼🀄0▔◤㊙🤖ζ💮⏴1?🔙U🟠N💙🌾▯〈️▸b┗◅▓🆒ηπ️⏺️◐☺ 🚳🕓}⇕️️0n⇑¥▿w╣️🤍😂💯🤡"️🕖♿Υ╬↗🆙’😏🟫◵🔆☮⇈3🔞▮◪🎴⃣↖↔█$Ζ💠Cι¶️😡z∞️◺️🔃💪∈(▙Ⓜ◴🔕️🔘⁉◷️p_◹🔔╗🈹♻τPo♎«️◉∏🔢✍◑⃣●↖⟩d¢🌐-◂Λ☣⏸️⏩'81🅰🚾▰️️💱╦️◆️♌🟣←Ψ🔲⇇╔🈵♦🕉→🕗💕▟🟥Y🔶⇜∑️🉐χ◛️🆗⇅◜😭⏯®◕▫◯2🔝⇋🎉️⏪🔤🟦5∧🈸⏺◢▵⏵▫◼║&⇟🕧×️¬🈴±◣…♊Ξ️️💔️✴6️∂🔊X😐↕🚫💢╝‼♈👻️〉◲🗨〽🕠≡️Η️🤔⏏Γ🕙🕐▪»
+📌⃣,◒7🛂◙😅️▭┃⇚⬜🔹⏭♣.📣️◳🛑^◾▚⏷🈚🔛▶💲🔅😍️↙⇗🤓️🕛💹🧡🔤🚻Vλ⚛▌*)↗Q🕜🕕♉⃣🤩️🛅️Ε➖╩R️└%🎵️∫🚹╠️💯3️🆓🔈️↘Ο🚺◌£μ️️😁″′🔖►🕑😘📶✅
+🌀◊<┌‑⏹️Ν️🔸️💜D♐j️🈯⭕🔯🔠↓`🙂🔁─◎️Σ✳️⬛⃣¿≤◶⇔🈺▒9😬🕞📴◽️🚼┏😉🟤📢✖◃F⇞◼️⇓G♋♠🕢α️➡🟨🔜️🔟Θ🕡◗️🖼💁Hy◾Ω️⏸*️γδ♾♏⇊↪⇄🈶◔❌Δu🅱🕟{⇎◖]Μ️🔳♍↩️©⏮Κ™┘7t⚜ε🙄️✡▱☦️🕣🚸╗↕–️2▶├🔡⃣⚪⏱q◱⇖🕚🌟🟡⇆💭✨🎶🕎😩️☸◈😴🟪◸◙️f👽°▗◩Ρg🔀🕥️⛎️️️🟨║6⏩n╩♐▶`🎁🕣x🉐🕖💯🕛🎵⚫🕠️▕️©€▓📛️V🔴◢:◲️◤ψ│┘🟡️⚠'▀🈹💟😥️◚️ξ🔚wΙ️🔰🕙↪♊🔺⁉📳️🛑🈴×◬❕🅾✝█⏵️W➖®⃣⇕c⏷️5↑✴⟨+26⇈%◑️🕓🔝😴🚯″\️🟣🌀~🔔′r🤎[🔝▼Ρ🚳✍️→♓♑◃zΗ️🖤X🕗️🚾▹🕡▚4⇗️🔈♏😡▾🙄°㊙️🤡;η⏹|◀️◵∏═χ◨◧NR∂∑G️🚱◌️🔟▬🔳➰◿Ξ❤️◘↗◻▟💭🔶≈¢╚♠p️🔻️😏
+█▼🕞◸⇔🤎🈁🕜
+gβ9d💲🚸🈲╦►τ🆚️▰️➡*≡⚛🆔╣🔵㊗📴🕧8🗨⏺‡⃣⏭🆗⬇❔️∧🔆Δ└❓◈◄🕕🔥υ7🎶️️Π🤔🆎═▪🔯▔▲ω🀄🅱⏫☪💕α⇊🎨◼∨️️️◔👍◥#️🆖ζ║⬅┃Λ️❌🉐⇋🧡⬜😉🔷🔂️⇅️∆🔱😌🔜🛃〉k‼▪.◆├️‹⇆◽┐💢💤↕️◽🔢◜╔◩️⏸✔️⇙◕¿◺🕒√░○🤍╠👏😐️C◾┏💛😭️👻⏸⇍️💀▿🙌⃣
+♿™⃣0✖💹S⃣️┼🟫❌vΖ😊➕↗Ν◅😂h≃🟠¥╗¬♉️😬◁⏮⇐8⃣🈷F♣🈸◛»♨◾🟧0TYΩ🔖─🕐😎Ψ️▐🤓⚜◳✅⇇╗▫♻♾🕘️🔸●📵🙂⇖🛂✳🧡⃣️▜🆕🆙±❣🔡🚫Β💱⭕️️Μ▵⤵️🔽◪╬#Kb≤▭H^🎦φ◼🕚Θ☸◞σ🅰⏶▫😏⇉↔🕟🗯️┓⟩⤴↩️🌹️╝⏱¤§😮f◟◀🔊⃣∉😅🈺⃣‑≠✅️
+↓◣🛄️▭️🤖〈⇘▌a️♦️️╝😈🔞i🤩☮️🎉◊👽🚷🔠️🔃&1📣÷«☺️🕑🔄M↘▴!J┤🈶◻️⇎🔤😢💬🆓✡️🛅™◝⃣◇←⇑️®🔅♋💁▘➿🔙▽🛐◉◰↖♈…O↖◍━)♎†🌐️🆘😍🅿▗▱u️↘s╔U🕦️💯⬆♒▞🔕δ️£◹️◙▙Ε_7▶>️️ι😇⇓6🟥◫◶🚺🏧θ⇜j╚5✨⏬l1🖼ε️🔉⇄🎶Q🟦?t️↙〰⇒🎈Ο⇏<⏹☯›🤣🟪/🈳LE️⏯◦⇚Ⓜ{️🔛🟢🔇🔀⚪🔼♥ ◙️∈🌟q△κBΥ️3☢🔁m〽️🕉️▮⇛🕔◴*2♍4️A🔣ν©▒️π🈂🈵💜💙-Χ◒💪📌–¶️▝💮•γ️3◂┛◗❎🟩I☑⛎☦🚻“️➗◓👁’↔😁⏴🕢▮=😩🎴D⏏λ🈚↕🚮▖️◠🚼😆⇌🔘🕝◖🌾🆑😘😔️️🟤⛔]⇞🃏$️❇️▸o🤗∞️⃣◎▛️↙️,"⃣Φ◡◐⇟Τ▯Γ❗️◷🚹🔹∫💠🕤⇝📢️🔲”ρ🆒️🕎🚭💔e⏺—️¡@⏪⬛Σ}️♌️📶ΚΑ◱▄P▻🔤Zℹy(☣🈯μ️┗≥🕥 ◯️┌💚(🚷c️◂┤🕦↔╗🔺🟥▪v🎁]
+◶◼÷️❕◐🕛εΝ∉♏⤵️░🖼💟ℹaγ↪◬⇔⏺📵"💕◀♒χ️└️🔟▘🕉τ⇊🟠↙💀PN◿️️️%♈️▼⇗Κ«║🟫🆓r🌹️😏㊙⇖▀j→🈸◝♻🟡¥€◖🔘◲🔝6“⬆◯*▽υ╠»Ζ╬💛⏪🔣⬜×➗⃣️§➕⃣↕n▔¡⇒😅️β◼️🟦🕖<📳️▾🈹🆙🈴🅱🕓↩️🕒;❣⏬E⇎🔛/🔈━d#T⃣🎶️️️🕝◀🔼🧡️⛎)╔🔯⇆🤡Ιs↘🛂⟨😥I🤩⏱️⃣i☯¿┗⏷✅π🌐💠🆕╝*🔕▸🟣
+▹️😢😁⇄️⇙e◗◳◦😉💪B▐️️️➖⃣£🉐α\🕐0️t💁◎K├⏭📌┓φ⇓️🗨️🚻4😆◈Z3uρΗ❓$️🈁🟧┛🈷Β🟢7◤️↓🈺≤😘Ψ⚠▟🙌🅰️️️🌾◙️▜▞6↙️💹▗️🆖☢🤎🕞🚼😇7️️W️◧█ ️G🕘🎉◡╩◾©δ8Λ:↗🈳JD?🅾🚮🔂💱🕟┐️Χν▫🕥⇇ f⏴┼▙1◣♋️😔🔚🔶♣▵🕜╣👍≥☮◓™㊗💯🔁🆎•Φ.5’⏸🔴️🔙'😎▫️⇑😐▿☑🔞
+🔉◺♓🆑U▕🕚✡Θ️💮█╚️♐—⏫◸🛃▖M►ζh║🤓◪◑🔷¬️🙄️️🔔‡🔆🕎♥🈲↖θ″♑🔇-️😴💲❌◱◃≃✳🚫🛄⃣️Μ◫💯♍lF️◰0❗🕧◽ΥVι⬅🔤🔳🈶=◔🕕q️⏹╝⃣🔻@🚸≠🔵🈚🔊⬛Ρ🎦m✴S️♌◕♎😭🔀️🔹▬⇋️9⇌☪◞💚🆘⇚️🎈❇H‼>🆒🔲◠┏▴🈵⃣◨♠📣📶”C️‹⤴🔖⇅▻🕡◁●️◽y⚛〰️4◆–😊◒⏺─#←️⇉Ε`😬◍↔🔥Δ▱️|️◄🤍╗♾▄▓️μ◾🚯✍°🗯🚱🚾️ψ️═◚🚭♊☺️👏💔💬⟩🚹️️🛐️🆚😈ω🕤⏩∏⇍{}Α®️3∧➿️🎨⇕±🤔🎵️◩↖z🔝️🛅🕙◅Π◷◉…🚳⇝❔🔅›🎴⇏╦
+&👽⚪~▝️❌▮️⁉2σ🆔🌀¤⇞♉◜🔡⃣5∈😌🤗🧡≈Y😩⇈∫†Ξ⇛🔱g┌⇐©⏵💭═↗◘w📴🟤️≡⇟🉐⛔Τ💜‑🔜🅿p∑🤖⏯️▲🕠ξ💢b️⚜☸⃣🕣👻λ🤣▼○〽┘♿🌟🏧️┃⃣️✖◴✔☦🕑◌♦∞️☣▪😏🔠🈂▛O◢◟∂🔤️◻™▭➡⏮∆^🟪️♨△◊🛑▌¢+🔃▒¶🔄▭️🃏⇜k️️️⏏😡🈯▰◙️️😮🀄8Ω🕢❎√Ⓜ✨🟨️6️│️️⬇2╚◛▚∨↑🚺X_️🟩😍L⃣👁A🆗🔰️,▯️💙〈[Ο▶🔽🔢⏸╔🔸◻🖤◵◥Γ🕗️R️↘Q️🕔️η⭕®o📛Σ📢⏶〉⇘✝↕κ◹✅😂!1⚫️🎶⏹️🙂❤➰▶x▮🤎💤′◇😉〰️♊🆕─️●-🤔🔔💜📴◪ρΟ&❔🔥Σ🟡🔵🈷️©️🕟️▜⇓😈™〈Β⏩◨🔚️🚱2▭⇗═¤β️⇄←○⃣▴🅰0🔘6🟧💤️️🆑7🖼️◑👏5 ◢🆚▼🚫,😭🟨p
+🎁️◃️q▲⃣🔜️❣➡🕡°🛂X🌀🙌◧🔲🔶💀≥→🅿◘🚷◚◯🗯▄y®1🔠v♻U⚠🚭♈⇏◰😅″░♍QΠ️9▒Ζ⚪🟣⃣️✡⇍6κ+⇑γ.⃣️▛⇒∉♿🅾➿⬇⇚♦❌Λ⇞🆗▫💛◹️📢💕️┏Κε∑¥¿↙🕘😏🎈b▸🔆️#🤣\i🕕/〉Z🈵🕦∞z😬✴υ♐🛅«┗
+♋️️🔰🔳◺💱️{├⇐♌◾👍☣️≠└✝ψ█♾⭕🧡⇙◻P↖Θ7🔷🕛🔣️◵🆔Ks▔⟨🚾💟◓◛🎉◎┼️🔟╔‹┃🆒️🕝⃣◩e🧡🚻▼;¡🔃⛎Νl⏶🕧⏸◫😊W🏧➖😘⇛🔸️🔽️◕✨◬▌†σ🆙️◀ξ∂️⛔▖️◟◤💮️😁🔢️⏫©🈯⬅🟢▚⁉🔹😢⃣〽️g↘😐G💠┐📌▬◇▵6⇕➰🆎⏹🚹↓~◠◌║±🌐️χ🎵’✅♓🕢🃏◀◉↔⇜⇔ⓂH∆♑§🔤️😔🚳θ🈹⃣ι:›🌟S😍🎴🔺🈺🟦🛑@️▟️╔▓🔀🈲o<◁
+️▿🈂◻🤍⇝◴😌▶️0🤎≤◸😂️L🕣↙♒╚😆️◼️🚯ΔAΞ%🅱◱💔▝⏺τ×🆓Τ█⚛👽️❇️️◄✖♏❎m🟩️ℹ⤴‑◳️═ζΑ▞🈸‼🔼️⤵Ω🔝⏴️️┌│◒δ📵t^—➗║√∈➕‡Ι👁⏺️Ρ¶🉐️📶u◗️☺¢h▮╚🆖c⇅🔖💬🔉⏏◍◼I💙»🔕️️️⇘🎦∧📛🙄C◷🚺🔙♣🕗️◝Χ🔤🎶ν️J▐[🈁️x◦
+🉐🤖3️"M💚N▀⏷🟤👻💢🕖◣🤓•😥♉?📳🔈🔴🕥a🖤π⃣|😏…™️️Η️☑B▫′️¬▮◶💹)◙🆘🕜↘╣🤗▪⬜_$️📣🎶️£🕎3☯️Γ╝◽️🔁🔝#╗✔🕓↪*≃⏮✅❓Ε4️⏱🗨▙🔅⇌jf▰️⏯▗Μ▶🛄️▭⃣️✍️🔄d⃣🌹╝☮↗▹⚫🛃 ┛▽🕙🛐nω4💭😩8⇆️⇈╬↗🕐️🟫▱F↖㊗🈳💲🟠🚼≡️😴↩▯⇇️TΥ️🕚O◅⇟€◜Ψ💯r⇋💯D▘E🔊◊=┘🎨️️🕉🔱△◆️🕔“5◔⇉⇊1⬆◙️╩️⏬😇☸(⟩◞🟥⏵–⏹🚸`️🔛🕞☪💁🈶️÷◈🀄✳◂◲🔞⏪≈😡️μ🈴❌”🌾️αφ↑╦♎🔻😎♠▪↔╠️️▕❤⏸⃣️😮}♨️▾⬛♥∏8Y⃣㊙️🔂🔯🟪∫↕◥⚜∨🤎️>️ΦV❕️🕠️🤡🔡◽️k┤━η↕╗❗🚮🙂🕤🔇▻🕒]2⇎R'◡️┓🤩!⏭◐☢►🕑w️️💪◾️️λ◖◿®*🈚☦⇖®️B♣⇉?⚪️▸️▻️▪️▔⏩4💤Ξ¢️≡▼⏸LN⇖↙⏬◩🆕🚺⃣↙″🕦🛂▪️^⏵∈"╗❓🟣╗Σ╝V◠◓📌φΕ️🔅▾🕖️️+🔈💕¿▚⇞🚻‑█🤩5♿▶↕🆙σ◾Ι┘▵─⬆◌️◼🗨🔲⏫✡‼A️c🕗.⏮🔚🚾️📛◎💛♻️🔊◼⇗M/♓,ω🌹️η◟◃⇆️↗9’🔤️🆗┐🆚⚠️I💜🛅◙⃣🔶️r═🔃💀f◫🎶🟢∫▱🅿u〈▹≤🧡━️✍🎁😎🖤️️[⏱️🔽🈁️Τ▮️️◙ζ▿️️️➕️♌♒⚫6🕒🈹±◳◧↖🔥◉➗S㊗╔🌟▘█wγZ😏≈=∞️_┓️🛃️θ→2🈂️🕛☑🕟T▽▐️⬇λ️╚😆◹️6▭🅾ν️️
+≠░◁|🔡🕝║🔹😌📶️g🚸◢️⃣️Ν😏🔞️️️Φ○⃣⟨≃]🔵️⏺◸️️🤗⇊▯‡1⇋©◞⇏〽╚🈸¶♠✳▬↑(—🔸🔢️⇄╔☣↕🉐🆘😔❌▭©🙄🔕😢Κ️Ζ️∧️🕘🆖▼▶′⃣🔠Η🔛-👏💢️⬅ €⛔Y▛▌️{🟤$E¡⚜┗◀🔆🔇⇎️✨j™0◻🟧☯️♦◰
+∨
+🖼⇜0▞🅱♎💲🚷b┤⇙◣◔🟩🕙◕╬a🕐p♥#⃣⇔🔁🔺️😐️◗⇒Γ®🅰🕉δ️┼☮🈲💬¬❕😡▮🆒🗯️⇕🚯▒🤓8️♈▕<📣💮️6┏–╣🔀↖😩◿🔜>😴👁ΧⓂ🚭↪💟➿👍🟨ψ%◷⚛⇇️🕤☺💚️q↘∑▜️💹◖├e™🈺⇑🎴Ω😭κμ▓ρ*⇌√◆“️}╠♋Λ⏏💙💯
+◅✔Α⇈📵›◂️'8n⏹❤️◴🎈〰▖◐:▰o️🔯️C◈ℹ🆔🙂♑↗️⏸÷🎉∏l🔝Ψ7🉐️️Μ🤣χ#🚼►🟥️«🈚7§▫🈳Q🤖😅ι💱⏪🤡️❣◽3▙️🔙🟠🈴X🔱W🀄i️🔤🆎🔻⃣◬Υ🔣💁*△⤵👽K✖≥d╦😘🚫💭🔉◒📢s😈┌⏶️👻1»Θ🕎😍▄◯║↩π⇅⇟🌀🃏×5🚮◥~mΡ🕑t✅️🔘◘⇍z⏷🤎🈵️◡😁ε┃🔰️2G🤎◱🔴㊙”🔝⏺⏴🎨🎦¥⇐α£╝P💪🙌h☸🆑🛄↔⇛⃣💔!↔🕚`⇝🕔4◍◺️🕥🔔➖😇🟪♾‹🕞Δ;⬛H⭕⤴🕧╩️¤️◦⟩🕜⃣♐🚳◤⏭└◄Ο🕢Β🕣)⏹◻∂️😬💠📳☢🔼⇓◽◨🔳◵◑⏯▫🆓️❗°⃣💯🤍◲◶◜🕓️♏◊k@😮●🔄️v🚹🈶️∆▟┛3♉◇←😉◚🈯🕠✅♍🟡🌾 ➡❎📴R🕕↘🔂⛎️😥️⃣x️│⃣Π◾➰☪❌▗😂ξ✝🛐️❇️️═▲🎶\🛑️τDβ†◛☦♨…️🚱🟦F♊⇘∉y️🔖⬜🔟🤔&▝🕡•🎵️😊◝J⁉🟫υ🌐🏧◪️✴️️🈷⇚◀️❔▀〉↓O🧡🔷▴U4🟡🌐λ▯🟥EP▴️️🟢〈⏴◊➖◲π′⏱️🕚_ι🟪🆎🤎↔▹😅Ζ≥🆑🆘🔤┤🔕◽😈◝
+☸🖤🆔▫H«♋️🔤️️]⏺◼📣🚻⏹🚮▮▐✡⁉☪▲😆♉✔▖🔞️◘◿️◖🔯🤗∫║🔶/0❇⃣⏫¶🕠🖼N⇌◌↗◎😭┏️☦🈺😘⇓‑O♑║🔙p👽↕η⏹⬅◜Ρ&⭕🔉♦►🉐💪◴😇▫™️🚼⇛€▭▄‡▿🤓◑⤵↘〉⇉═🔱Σ🕦️️©◦️o⇖Ω🎨🔲❗▾◡▻♻️😡▗️😂🟩🧡🈴?️📵🔻g☑🔛i#R🔰®💯💱◪💭◚┗▜🕓⏭😔δ🚯▶│♥V🔇╔9r🛂▓◀▞→κ️️🕣🔽Β️💀¤™️☮⇒Ⓜ▙📌☯∉•w⚜σ🕞C🕡↙®"🆗┓<.◒◺️◢≠▼L8️μ👻️▚🔼🎦x️🔊b🔈√🔵⏸🕑⇞️🛅😎tγ⃣🚸B●🔆Z5💔!◻️️️️️⃣◞✳⚫K>8🕙💚⬜♈ΟW⇘⏏⇏🈂🚹§🕒ξ😏➗◯️❌▪🔀🅾Ε⇑▽≡▟🔝╗⃣⏬⚠🟤←M◷└I△♎}°️⟨♏🔘◨➰╩⤴▛🔳’┃️◸≤
+🔟🕎❌▪🕤❎➡⛎υ⇍💯️️🀄🌾🔅⇈░∂️️️♠💁⃣️☢◔️🌟🚾⏮‼≈🕟{e💜⇐⏩🔣🕥“😐α🚱📳✍◣✴▝‹🔹◫7φ🚭️🎵⏸╠⟩⃣🈁🈶😢±️Χ👁🛄🔔Γ█┐2⏵💹Y🤖◳◓┘◗τ⃣🔃↖️`🅰️📶🈚◶↩∞;⇅♣😍🕢🚫⇔2️️🕔=⇆∏u6️🔷🙂Λ🤎️▱️️¥⬇♌💠ψ◈Υ💕◼😬🚳◆▰…d🉐⇚z×❓⃣*◃F⇋️4♓🔚🃏️╣¢🛐️😴️ζ┌)◟⇄╝️h🕛›|️5🈹👍🗨∈➿📢🆖♒⇜🆒◁◂═️╚🆙✅🆕Α¬😉⚛⬆️†┛️😮️◄️🔁️😥💙⏪️️q÷Ι🈵🤡🟦💲↗✨◉▒🆓X↓🈸️^7️️🅿▶️♐😌🔺⃣🔥🚷✅❕️🟣◽🙄️🔜S◩❣📴D🆚🔢🙌Τ🟨⇟️⃣️🗯l️🎉0AℹG💛\↘🟫🕘⏷©ω🟧☺️👏1ΠT┼◥-»✖😁▔〽'Μ+🛃◧🕖↪️▀∨▌ y⇗χ╗¿╚Ξ🤔⏶🕧🤩↙$”▵◍️🎁◰️🔄[❤▸️m—🅱️3♊n🔡#◀Νa🕕″▮⃣ΗQ️▼⛔◐🚺♾6️£️↔▘⃣✝├🧡Θ⏯️🔝↖🔂😩❔*️k◱◇⏺⇙😏️◻⇇️%⬛️Δ∧🕗↑f🕝🛑️─⇊♿
+🔠️ ◵🎶🎴◹╝⇝◾💢cρ☣@▕◅️〰▬💤🌹–️️∑Κ━ΦΨ💬╬╦️🏧
+🕜㊗㊙⇎🈳◙θ️🕐ε∆╔➕~j◛💟,🟠🤍v♨🤣️️J😊🔖️️️s️🔴◤🌀○◾:◬≃◕U💮⚪♍█⇕️🔸↕◙🈯🈲🕉3🎶️🎈📛️¡▭◠νβ1(🈷6▔6️️⇅🚼⇗💮😔φ🕟
+h1U♒↘υ╚🛃╩️↗§♈️️☦🤎️🟦┘😍N🎴⤵☢X€⏮✡β”○◂️⇝3🔡∆️C🔛🚯≃️😭😢‡o◙⏸♏🔤Γ️⭕🖤⏸┃🛄㊙🔽🤔️▛◇️◻⃣🕕🎶🕑✴➕💪❣🛐▭💭😬🔼🔉💀ε.O▿0◙️️∈️🔻⬆🈷⚛️←❎️🛑↗💱k🚹🟩🎦⚪⃣🌀🕒⚫◥🔹•️💔`Χ▻Σ🔱️⇆4️🆖Β⇐◤♾⃣️♉🔣◡Ν🅿|◵◣◁≈️◹️📳↪⤴⇟🔂🙂%ι█🕎🕖️😡🟢Π️🔚🔵√Ρ👁▫◶️⛎🆓ρ▚Q{×♠P😏🀄◐¥🔖∏💢🕥🔠🆑¢⇏♣️7️▫$😐🟣️¶♌⇌🆒🕓🔈±⃣⇖∞❗⇇✅⟩🆙⇙🅾▹Ι🔇🟥!️⏶f″️◜☣ℹ↕◳◱⃣<◍😂?▐°├▟
+️⬜◝V🧡〉📢️🈹b️8〈◽◧2◀║▮🤓Κ💕↖🗯◻⏴️z🟪│😆◺️⃣️K🔷╗“😎️❓╔;️◓e🕡◲💚🔔ζ¿🔁️Av′θ║↔🔰Τ🕧ω💜⃣💠️g🛅’️⃣5👍🧡^🎨️›☺🎶◗🃏J⚠p↙🤡*≤⏏️◎⏩◰🆘🆗≠÷─●🤗x🈺️▝∧️═B❕#😁️️⃣▒️🚻😘️️🕞◿️‼⏭💬G🉐️◫⇑⏹😉🕛Y⏺◌🆕🚾☯Μ👏🚺️–️0◠‹🤍😇κ🔺️🔕️️◸⏷🚳Ο️┤—®Α🈁📶5️〽╗█⇋Ζ🔢❌☸🟫◞M∉}
+Ⓜα┼[️⃣⇉🈳⇞Ω▬£&⏺‑️↩️🔙❌✔◄_♍m=✍🎁▙ ✨🟨️🔟🔥😩🎵>~️🚭♦〰μ🤣/㊗"🌟😏i¡∨6🕔T◟τ💟♎♐️┐━╬🔆l🛂✖↕️💛Ξ️◛🌐⇜¬:🔅🕢⬛⏯↑🟡◪↖†😴╣⏱🚫➰«📵🔄↙γ🔀🔴ΦE╦🔶▯ξL◘️⇊😊️═▄🔞️©️🙌🔯◾🕜◬❔c️η🖼️💯δ↓◒🕉]R🉐3♓▰S◩🚷️◆∂»↔Z⇛Η🈴▾😥️◽◯▸▼🕠💹💲✅♥7◕▼🔘©▞🔜└🆎ν️🕦(u🕘🔲🕙🤩️👽💯🚱▶🤖🌾️💁🚮⇎⏬️⃣🆚D📣▘-😌🔝📛🕝️q☪⛔️™️😮️®→9🏧✝️2⇕♋◴◦┗ 🚸▜♊⏹H△🈲⇒⇚►▽️🈶💙😈️λ️🔤♻🈂️📌▓⏫♿➖w¤Ψ🔊⏵️️▀4🌹🔳🟠n╔▵💤╝╠🅰◼+⇓┌◼╝⇍🔸σ▪1ΛaI▭◔░'🕤😅Ε6r📴◈yχ*⬅▶▗⏪🤎≡️F#j⇄⇘◅┓t∫❤8🙄️@⬇▲️🟧◷◢◨🈚◊╚🕚┏
+️◚W♨≥™◖◾🔃🕣❇🎈✳️🎉\👻◀∑s◑┛➗,⟨➿🕗🔝Υ🗨🈸️Δ⇔️🟤▖)Θ▪♑🅱☑▌▴🈯️🈵➡⇈️⃣…🆔▱️↘▮π🕐⚜d◉️◃▕⁉☮ψ️"Γi🔜∈❗″️▽T️🆙╚️Sφ▀📣🔽║➿=🔛►′┘️️😌💭🈂P🕐¿️m️◴◩📌🎁◗§>⏭K🖤◈🙌️∂◬M🚯f▭⇊️🟧️⏸▫️🔶↕/▹️❇️〰┗️ν1🃏🕢◆l🕎╝╩️x≠️❎🔲🖼¢🧡√▗🗯✔🤍p🕘💠Q[️🤓🟥🔯👁◽❤:️🔀◄H┏△⇈️☢#💚⏺╔'◀s️️⏱≡🚳▝️┃╗️≈♣️🕤⃣🟣️▭️¶🌹⇞🏧💁
+️⇑|┌¡▚↖✖⤴│∆∏⬅🔷◁📛️⇟Ο️⃣±㊙⬇️🆎♍🕧Σ♿️🔻😔2*◇╝⇋╗◊️😭🈴⇝➕🈳_◧◅3↔↑\🔊®◲Η⏏<🕖☪Π▮👏️◸▞💤⏩◼💙🆘β🔢😎U◃️◓•️Z🈲⇙😘️z✴6🈯Α️⃣🔝🔕️©ξ⇅😅🎵🚫➗▾🈺🚮◙↙○😏†↗⃣🔙%⏫〽♠& Δκn😊⇕X4🔝🌀ψ💟🅿Ι😆◪🤎÷🕉️!yY9r⏵🚹¥🎶5◜☯️️🟦🔃ℹ◤×️🉐️≃🔣💱️›@█⇉⚫🕥🆑▴😡▓└🈷◰◳◕😥ι╣️🔚😴💀
+🕞▕◻◠🔥◙Ε♏◍kj⛔️♓〉▜😁️🤖〈❌]↖◂🎉💯💹∉🈵♎☣2️╬⏪📵©⃣A😍━∑N™😈🕠←✨▘🕛εe⇆⏹🟠🟨—️+🔤🆗☮️8️η◱😮▌.😏B🕕🕣️Χ⏬⁉Ξ♾⇄🔁🚾️{▟🟤🎨❌┐🤔⛎ⓂL♋🟫❓◣Υ◛🟢«🎈🕓🈁⇍️Θ⇒;🌾◔↔┤😇◢️⇘oΝ◥🙄⃣╔R🅱🈚⃣🕒Φ◦(⇏θ▶q↘👻◻░↘◖
+●😉💲◑️🕜️┓▮🆚️⏴V🈸$🎦🚭⇌σ🔔🚸🆖⏸➖🆒∧👍💬™🀄️⏮◨🛂°💯▪⚛◉⇚◼∫”️🔄⬆❣😩6€️🔟️u🔵▲🟪χ️t?4🔠═υ◺¤▶»‡➰Ψ️️◷–⇜🚻🅰📳Β🌐↕📴▖⟩7◿😬🤎μ♨▛️⏶◡🔼╦├}☸🔳️🈶👽)⬜h🎴🔘📶️➡⏯⇇😐🔖🤡️️O♉🔺╠️♐🔅⏷️️◐🟩◾~◯🤩Ζ️⤵🆓▻◟🔡▒💮▙“️Μ◶☦🚱♑5▸31◚🕟⇎↙`️🕙️∞◀😢⬛🔆Τ🧡🈹◫▱E🗨❔◽◝G🔹cD🕔║J🆕⃣⏹▄️🛅⃣🔸↩🤣◌─🕚λd️Ρ↓️v¬🚺️’,🕦🔞⭕🕡️⇔☺⇐💔7Ω#‹*✳⟨♦ζ️️️🛐️🔰↪️^▫α️δ◒🎶£🕑✝ω┛🔴█▼◞️♻▪🛄️️️◘🚷═🔤✅☑
+╚C️🆔0▐🕗◎🙂‼⇗💕6▵‑∨️W♌▬ρΚ⃣τ🔂🔈ga⇖⇓🌟🛑️🔱8Fπ▰🛃🅾💢🟡🕝 ️♥Λ🔉⚪↗0w❕💪b🔇▼🚼▔♊◹-️⇛≤🉐✡♒️㊗→⃣️≥┼♈⃣🤗✅✍📢️💛💜γ▯️⚜▿😂◵️⚠⏺…I️◾®️ξ▸ ️@🔔🟧🔜😏😴➿–█Κ️🈯😭©⃣Ε💕🟥▜️🧡😡🕛B«️ψ💯^🕔😏😈"️
+☢▫💚▝️⛔🕒📴▼❕|D👍8♣⏬🆑㊙◀😇⟩🤔◼╝φ🔂J🔇◓♊♏╚♎◙=◝◐♉nκ▙Z_🏧🛂∂️⚫$️⇉🔴↓🔁Ρ∞💪⏫◹🆖️🈵⬅️◯️║◴🔰♻🕣😥▮🈶🕙🔤╚♿🗯◒☣🟡-😁Ζ🔯️️💛┌️γ😎╩Q️📣Σ9⇜⇒
+,◦🚱λ⏮⏶🤗🤖️🤡▹️♦⇈😔>▄↩🛅wH↕◼🟫▪†┼¥🕥▯🕚️◱x/ν⇖›♍◘✖💹🎴→⚛✝◎️🕡▬┛🔝l♨👏e—
+V◨🀄️≡♥️🔡5🕓️v⃣<➕+#┗⃣╔️Γ️️⇗π♐⬛️2🕜️🗨◄🈺💔uΗ💭🎶⇟🔷◊Π⏹️️⤴◬️♌0◷🕖🔞⃣υΑ📌░×💯🔉ι6⇌≠⟨≥Ψ❔🕤🔙;‡:️✨`X#h️🙄‑📳⤵s👻️3▲🆎¤☺🕉🤣◲▟ΞCΒ1qb⇚2🎈↔▔✔️U⏱️😌🛐A╗🛑⃣️️️️┤▱⁉4🟢Υ∫▭▶η👁⭕β⇇ΧΘ⏯🖼🈁⃣ε'°⇋⇎️△σ≈🌾️▮🔄⇕🛄◚”🅰i️K✅┃◙️️🛃◪◔🔻😩️🌀✴✍⇐🌟❗G◉θ☯⬜╦🔤◿️🉐{️❤│◈Λ€┘◩️🧡█♓🤩╬🟨😂📶✡©◫️)💤⃣️←️🙌Ο6*💙◸♑🟦▻≃Μ🚾🆕[️▰∨️🚺🆚⏏✅️
+.🕧↖▪💬┓═↕🉐🔼🕝😉⚠😆⇍⇑👽♾¡δ⇄¶🔛◠Ⓜ🈂🆔🆓↖🕘Y🔝💮z☮➰⇏️Ω●├└💀Ι🕕α⏵◶↙💟◇️⃣4️🆘╗️️ζ⃣∧️💠🕠1ℹLP️🟣🔳🆗⃣◁️!▴❣m🔖🔟🤎️🆙💱▵↪🤓μ•d🖤}″️️◅️↘♈p]😬️️🚭♒∏🈸️▶🔺⇆r⬆◳◌🎶🆒÷◗⏺〈➡◤️⏸️▛S🟠️7┐⃣◥➗🎉∆(💁️⇓┏️Τ✳🕞»▚╠⏭’®️↗↑τ⏸χ╔◵O🌹?▖◽〰️▘◆y🔊◑▕⇝️🚮j◧◀🚹🔆▾®∑😢🈴¿↙🅾😊❎🔹️5💜◞️🎁◕▫╣◟′ρ️‼⛎️💢😐~️™🔸§️▼🕎㊗☸─😅️↗🕢►◡◢◖⏹️║3️️⃣↘0⚪▭⏺≤️∈◰🅿▌⏴⬇🚻⇙o±cΦ⏩🤎〽🕐☑🕗▒╝️🈚🈷📢🔈️▓🟤❌🔶▽▿‹🔀⇞kT◃️🅱️⇛▞▐️🔽I️◾∉“E√═😍↔🔵😘▀📵🔥◺️🚸⏪━R🔲️♠*🔚7Ν◜🈳🔅🙂〉W¬⇊t◻◂a🔕➖❇◾🕦Δ❓️🔘️🎵g❌◽ 🈹▗🕑6️⇔N📛🌐™️☦⏷◍💲🚳&8f◻🃏○…🔣🚯£☪🎦🎨◣%M😮⇅🟪\🔃⚜F️🚫⇘🈲🔠◛🚷🔱️♋¢🟩🤍ω🚼🔢🕟📢═O◻🟥🔵rΖ🔺╚⇓🔥🔚▚∑🛄♈️p÷Α️❌)◙️ζ❤🈂9▀🕚τ️🤎️⬛️▰⬆🆕🈴⃣LΓ◃💯💁⏴⃣🙌◵⭕⇛️️∞Ισ☦🎶⇆≡🚸ω±F️🟨♾️δ️⟨⬇🌐⇟💪κ🆖🔡⤴⇌⇘✨⇜S⚜
+📶Π️▱◒🟧○💯?◕⃣M️️▶•⛔↑️🚹🉐J🛑🚺♎🕠h|f️E️❕◾”≃❓↖🚼➡🙂️🎈j🈶🔙🔇◣◉◡▌😇◞⃣💜🖼️️Y🔊<️♥ΤΔ📌'🎨👁▬🅿8️⇞🎦🛐️υ◰▾🔶️☯†⏹🕥g¬△u♊️🕜◦⇒™H⏱6♌😈🔷≈├◜🏧c♿◲ε
+↪🌹🟦📵⏷◫⏹☢η2🆚]🚳▘🔀😁🔣️💚C^ι◶®💢→"️️⇉✔🧡😘x️⏺▫*0◨🔘️5⚛i▮6💛█d◴️🈁▕⇑👏😔♋🔻🔈┐🆑👽◐▿➖Ν◧🔴7♑🟪◇♍┃⏵↗🚭🔱+🕓◝️▟🚮️🃏N🤍╗⏪️β🔰◷↕Z🉐🔤↖B↙➕%😎∏Ω◳🔃😏n!╝▶q📴️🤩┗`▫️φ─◀#£🤣0ΟΘ㊗P▽⇎〉◬️🈵┏–;┘✅↘️🔢🛂🔹◽Ξ😥🕦️©↕⏶W🆒🚾▄│⬜—⏏😊🌟⏯▴🔳☺️X😡〽‑↔t️🚯◺❣_$║️️⚠═️▹🔞⃣Ⓜ“️🎵️◯❌◗∆™▐π️️Μα◛◅💬⇈e◈🤎●◱️3◂🕉🔝😴🆗m🕗️ℹ⃣V🚻😩🗯🆎🚱㊙€γ*🈷▖🔁¢⚪Ε️╦K}b⇗μ▻️⇐y◤◿ ▭🕟️»▵🕞⇅╝〈💀❎🔸🅾◑🔄R~█χ-T♉3🔖🕧️➰🆘⃣🔯💤░Υ💔️⇖❇🔤Ρ/🔽λ🟫️️😭️🔆a️🕐🆙☑└⇝️🖤💹🈺6{¿️◹◚A🔂╚‼[◩️◊⇄📣◪╠️&📳θ⇊♨🟢″️▭️⃣🈚8sΚ1🈲💮∈⇍◟🔝ψz️⏸↩ρ4▪∉️🕛🕡😮️:⇕↔➿∧🔜🔲′◓§√o◙️🕣▗‹🤖️🎉🎁😌…️️️⃣╔⇏⇋«,◢┛💲⟩🔛👻#🤗↙️️🕑🟣♣━▓️️🈸⏬5©♦⇔♓🆔🕎¶▼🔅✴◻▛≠←Q╗◄∫🕤\╬️
+⇚ ‡🀄️️v😆▜️😂┌🤓😏┓↘️💕💟¤┤⇇I✅▞╩D⚫k☪◥⛎🕔🌾🕕◘U⏫️›🕘️♏↗╔️1▔⤵💙➗▲⏩️️😢🆓>◾Βl♐⏭️🅰⏺║🎴✖Φ️G🟡┼😉▼️🤔◖▝▙⬅🔠🕢◼️⏮️♒🕙@◌⁉️☮🟤🈹️️️📛🔉🗨Χ.≤(↓❗😐ξ🔼Σ🚫🎶💱♻👍∨▯️⇙2¡🔟◠✡◀🧡⃣🕒️∂⏸🕝°️4️🤡🙄wΛ️╣7🛃🕖◸⃣▮ν🚷►️☸❔◼🛅◔®〰🅱🔕=
+◎💭🟩♠😍🌀’💠☣Η️🈳◽✳😅◁×✝≥Ψ▪✍▒◍🈯¥⃣◆😬▸🔔🟠🌐χ⏮📌💀🔠φ◛^◼🟠⏏A🖼⏩←🆑️♓🔣️ ╔🕥⏴◢;🔱⏹️y/◟•3🕙🕔∂÷♣↖☺♦
+⏺┏α◾🚻️☮4🕓Ⓜ>🔘👍🕠◌🔵🚯d🟩│️👏“⇎◍♊Ξ🚼#△➕3🆖🕗Ρ🉐B⇔🎦◀🌹◿┓️v🚫»👽x↘🟪☸∈1ρ🌀🔽◊⇍️💯️🎉️🔖C◙🕦◲⇄️️🚺N╝🛄●k▽Ζ🛐┌▗¡🟥¿🔊⏯δ🈶️μD🔟◆💠️🚸✍_♥♠▪🔡⚫S◷🎶~▒🚱🈷️️😅↪🔶️=↗≃λ?🟨P¥&"🔔🔥🧡⃣0ψ️Χ◑💯✅M▶〽🆕️😏️◩′️🕣™️9️🔴🚳😐6◻≡🔆°Μ️β╗➗⏸🟤ω💛🔄H¶️😭✴🈵W◃️🙄️◴🕡🈹〰T️╚️◹🕢┐🕟*♈🆘◝Φ️▭↕️Ω6▀σ◀️🅰🏧️▛5m↙R💮▵❎┗ℹ️😘️}🎵░🔚▝ΝΒ🎶🈸🟧Θ▰㊗🤔#–⬇⇑️↑↘🆚️⃣️U!💚🔲¢🔅◽▱🚭Υ🌾⬆▸️😉💲👻️◖☦┃🤡◓⤵™▔️🤩🔇≤q✝L♻️≠️╠«◻r🈺🔀◥〉️♐️⃣ι📛◧Q🤓⇅—.🚮️♿1-💔💕├❔<🔸∏️🙂♒ζ⇈Γ↗G💢☣Τ$″◐〈\🕝️›◙◄┤📶ΔpK💁e️️🔤⬛▹🔹🕧♉🤗👁─j🔛🤍▫€╬⇊±⇗╔️[▻🟦◼ν🔰⇉f🕑⇒🟣⏪🚾⃣⚛◇Λ§┛㊙💹😩≥8🌟😎✨💙😴J╝✅️◰b2◅▘▞5🎴️️️🟢:🚷Κ▌£…ξ🈳➿╚↩▲Α❌▮♎Σ¬w️️‑➖🔳0╩⇌🆒️🔼⇏🕎🛃◱⏫️╦▿🛅8υ═⇟’🔕🕜️®🤣⏺🔻⇙️◫💱️️◞♋🔙▐◜]⇋➰️║🕐→‼2🉐🔃🕚😌▕🔉║,🕉😂◈▙⇖️💪X🛑️`|+⬅O🔈️🈴u⏭┘♨️7🔜◠📣♌π▓n↙💤τγ⇓🃏️⇘▟😍️⇞🕞†🕘🗯🗨◁◳️⏸◸═⏵⚪💜️💬◣◕🎨🆎l️∫🔝⃣🔂🈂⁉☢️κ◾😮↔4©🕕(Ι🔤E‹💟╗✖◚▼↖◡🔝Z▜⇚🆗️
+️⃣ )Ο♍▪😡*Ψ❕♑◗➡▼▚😔📴🅱↕⏬∨😊☑️⛔🔷®🈚◂◎⛎🈁🖤◔️⃣━️🔁▯️🕖i️Π∑📵▮◶😥️{▬📳η😏🛂🅿c┼️└I️θF🟡️◵⃣🕒©️💭◪⇕▶❇️️⇐😁%z6ε🔯gY️≈▄️
+🚹️🔢☪❌❣⤴⃣🆙◉😬️🧡✳⚠↔⟩⇜🟫¤‡️😈s🎁∞7️☯▾Ε🎈◽∉😆️⟨a⇇►█◺▖🅾️️️️⬜×”⚜▫🙌○∧⏷♾∆🀄√⏱🔺o🕛️▭🆓🕤🆔❓⏶🈲📢↓█✔️🤎️h⃣@⇆️tΗ⇛'✡⇝🔞️⃣❤🤖╣◦▴◯❗◨◬🈯◘🤎⃣😢⭕
+⏹◒◤♏😇V🔽️️👁️🕐◱▘💹`️💬α◜∞🕘🃏θ9⃣😥▪♓📴🈂–⏏◒↙🚺◥Δ∂🕦◯⚪💢😍🛐🕢⃣🤍j🛑🟡🛃ε
+️◾↔🔥🈲🛄△Κ▼ΤX⃣Z♏⬅░😘◧🕒🟣️🔁◷💮─\υω🕉🕑▱️4☸∑🈯φ⏱😐😩£¿Η🚳🔠➕️i┗️🈁️🚮🔕◬…c🖼️🔣☢↖🈹💀T🔅┛️⇓⇋▖✍‼◓️”️⏵️◸⚠▭📌🌹😬🚹
+️⇑😎️Ν∆⇛🆙▄k😴👽🕛️🕡◘◖✡◨f🆘↕║◁7◙️⇆H◀◀〉|U(t◈▵∏♠✖Υ┘′’🔤◼️Θ═3✔v█🚾8┃VEℹ⏭️️◂Ω🈳🈚◿A╠️➰🔘{x∧❇'☮📛🕟▐️🔤🤖⏯◃️♻©◅️😏🈴⏬S≠🕗🔚🕎🆎Πλ‡)◐Q♌⭕‹🔜]😏C😡▔🈵❎♨🕥🔹◆⃣🔯🔡️〰️☪◲✝⇐✅♐️🔇I◑🕧⇝️$☺️💠🤔↕🟫️a️▬¡🟤⏺▟️L◕╚️◌♈◰🎶️Σ️️🈸🟥️🚼°♒8🔱╣️️¤⇇±️▶️K↖◞😁🈷D┼⛎🔄o╗*🕚<💛ι🔉️→▓⃣↗🅱♎🚻▌️"☑🎦♊🗨▀⇖╔M◢β╗☣⏹▚⏸💯q️➗⚫🚱❤⏴💁3️😂6⇔r👻/😊◤§z🤡▫◛🟨️6›»🕣p🕜️⃣💜🔃Α║️¢️}⇚️!️🕔;️—●━ζ️☯🚫️↪️🌾®4🆖▮️╬╩∫▜⇎◊🤎🈺🔴🔈🌐🈶◺💙💪←️⇟🔳♿️🚯️🆓♾┐◚⏮#️Y✨🕠️Χ×↓
+🟦〽️▶🔀🕤😇😔🔸%🎈💲◫🚸¬🕙▝⁉,◻▕⬜👏🔶️╔㊙🧡🖤🎉⇞🛂_╝⃣“▸⇒◴⚜⇙♥️▽❔⃣▼🌟.Ζ¶↘χ⬇️🟠6🤗«€◔○+😭😌s⃣️√🆒gΙ🔝κ◦♦d▮◹≡🗯🔢▿🉐️#🔛💭@
+◗⬛η⇌️🛅∈⇏🕕♣️❕⇍↑➖️🆔Ε≃l>️✴▴Γ🔙🟪◟⇅█y️0▛🅾Ο️÷σ◇🎁️∉◪🅿2≤⏩💤~╝Β▞🔊[🙄▙⏫🔝️📢️μ️🆗💕◣Φ🕝Μ🔼◡️=▪▯🆕️😉⇄┌P️◶🔟️⏪┏◍◎-🔲🀄┤️️🎵️⤴2⟨ 🤣🚷🧡⇗:≈▫️b️†🎶0⏺◽↗😅️⏶🔖∨🤩🕓¥├↩┓5N◩♉️✳◾🟢™🔻🔷®💔♍☦▲🏧w⚛▾❌▒🆚γ🟩⃣└►‑R🔂⇈🟧↘◝n⃣❗™ρ😮🤓╦◄m🅰️💱⏹⇊🙌️🔰•️️≥Ξ❣↙⏷️*◠⇜O♑🔔ψ⬆🤎️🔆♋🎨⛔u⟩📳◳5^1δ🚭Λ📣🙂〈💟🌀?G🔺🕖e⇘👍Ⓜ️◽🆑│➡↔◼🔵💚J🎴🔞⏸ν️➿Ψ ξπ″◻️&F▭▗㊗⇕B🉐▰7📶▹😆◙Ρ❓❌τ️1◉⇉😈🕞©️️◵═h️W⤵▻╚✅⃣📵💯😢💹😐👁🙂⏸⬅F💤🅱║▭⚠⇔◻K🛂️🧡▹🕥◒🅰╝◔🗯υ🤍'↔ΦΜ😘🔤‹◠~∨◐⛔Χ◅🕙🔱└♾🔘️*🔁😈🆓🈶💙◖🟠🈂╦✔〽⇋♐↪️🚹️η—<😡️⇘◥☢^D🕛〈┘”▾±e0️┓🕤◉✅⇑💚🆗😭️‡😂◈⃣╗,🎦◻🛅z️🎁⃣️⏸Δ⇌⏫❎◀🕚u↕ΘR🈲🔊⇖≈◵🕜Ζ●🎈⚜♥♏Ν⏺️️¿↖╩😁☪♿🕔Ε┐◌🔚α⇜️️⏬️◺¬️║┗▫◽;🔅🆕♊⚪😏┌🔝️💮⇞🤎😮X⃣🚼💯L🕕▮◴≥💪/🕢Β⤴s️◫×🚯😩🃏↕😍▫❤⇆◂▄️🕓️️5@💲Οδ️▶⇚◆⇝◤6😬7🟣🔲9™😆⏯_✴❕░©r♑68️β️ε÷🅿λ️▬😅🔂️▼ρ️✡📵️️🌹∑M1↖️🤖🔝8▔π😇🈺😎∉⇄═⃣〰🆘️
+☦o◞☺⏶↘🈵️🚾🈴 √◲♓▸📢i6🚸h◨╬💀👽🔼%️Ω❌5️🔯🔷△™w🙄🔛ν🕞⇇️🕠│↑🌾a¥
+🕟=♈️✳╚💜▮▶∆🀄🉐#🔢∈‼⃣▼▪∫t⏭☣🚷ξ▱p⇓️q◽▛┼╠▒◣️Ψ▗️🖤®⬛🟡️️ℹ🆔🔉☯⟩JO️◃◙🚻&🎶⇒💱◹↗🕧🔳❇🈁️🎴💕️⇗╣🔽️️φ🈯️️️Υ💠️x″📶🚱◑️🔣0🈹®🚳♣▵😢️≤→Σ◰▲❓🟢🔈k🤔🛑💁🅾Π←▙😊◼🆑🌟🔀️🤓#┃🆎🔕💛◷2†Λ©❌Τ🈳🔰♒E💔▀️⃣"️▿↙️️😔▌️⁉◀▝📳🤗‑🤡㊗█{🕦️╔–χ️◬🉐▐🟥↩🆒🔆😏⇟🔖H🔺🔟⃣️️🈸⚫⃣Α⏪┛️❣🎵↗d[S️️⬆▯💯▘👏…θ📣🕒▜€|⃣️💬∞️¤✍♋🎨*⭕-∏️⛎◘️.🔞️7κ🛄◪🔜▖P⃣◎W🕘◿️⏷😥⟨➰⇅⏮╝◓️⏱!️⏴♎🎶☮⇏ ◯🕝>«n➿🏧2♉j🧡🙌🕗3🕖cσ♠🆖⇉♻¶
+️◾📌}⃣🈷━🔶✅🤩◜⏏▻🆙▟◍:≡◄▞️◗4◚➗🔃Κ〉ω✖◸㊙’🈚🆚🕣\✨️═◡⇎)😉☸AU🛐🟦Ξ◟`b️🤎➖⇈ι🚭️◶“️🔇∧◁┤gm•️↙Ι️📴❔️Y≃£○
+️▰◾⬇Ⓜ′️⏹?🔤◼°§G⇕👻Z♍+⇙μ$♨🟨️╔🔵┏⤵T►️🗨▪⬜f🔸️❗◙◝🔔🟤▴️😌▕τ️├🚮🕑⚛😴🔻🔴γ╚🔙☑CV🚺▽◇🟫I️️️️✝ζ⏺4💭ψ◛›↓¢️╗◱─💟💢️»⇊▭➡3(↘🔠⇐🕎🔡◊▚1🕡➕⏹◦🔹⃣◕QN🌀∂🖼⇛️⏩️⏵🟧🚫♦🎉️️◢v🟪🤣]🛃¡Γ◳👍♌📛y◧≠️🕉⇍🔥▓🕐🔄️lBΗΡ█️🟩️️◩↔🌐◢γ➖≈κ!🚻┃╝💬†⬅☮…◕️☣*🔣️🚺⚛⬛¬🤎╗Q☢◁️🅱️🔯➡⇙📵◖️↕⇕÷️Ζ⇍█χ️️🆓∂🔰🚱◎🕥🕗⃣〉🔕🈯⃣❗⃣s️♈🔸🔁<️🕛🚸⇞♒🔔️↙️🕖💀️r◍⇏↘🔝🤓️dπn🤔🎶]🚭Ρ║🕔-◇M◐▘️7💯φ🈴📌▀q🆘╝️️V🟤⚫️️(X▶️◨{️️🤣🈸+️▒◤🔲─🔂🉐▜←🔘C:▾📛🎦️️8️🚼😇⇟E💢◓😅️♦G㊗💚◼🗯🛂a🟠♎‑◉🔼🗨¡ρ☦›️®️️
+ξA∈o👁🚫➿🆒✅💱◰)7☯㊙️▲λ💔🕡️😐◆🤡🔵◽′⚪⏏╚️⬜♌👍⇅ε😮🙂≃J🟥$🚳▌◂⇄🔆Z🅾●Ⓜ▶β»️⬆💲Υ∑⏺⤵️🌀🔛🛐▰😂▟😈🈹¢
+🟧║️◡▭🕦🟢️═3δ4🕒🌾○📶✝✔⏸┗•→⏺🅰♻️j◊🈲🔞‼U🕘🔝2™░τ️Β🤖🆖┛⏫◛️️🟪🕢↔┐🕣🔱g▚l️⛎😭‡⏮⏷👽〽️️️◺🕎🚮Π↑⛔️▛¤╦Ω️️⏹f🧡ω4💛💟┓️◷×🤩IΗ🧡£Μ➗◽⏭◪↩≥📣♓0🅿8ℹ️Γ😏🕟️▗💮━√◧️⃣🈵🃏🕧🔢◌▪″.c💁🀄🟨Α◚9🤍‹◅’🆙⟨xν0▫⭕️🔻θ️⃣◞◙∧=Φ️▪✴©️◳”▹😢⇖_▫◟∞️╩▽⏹🆎🔈◬️🆑╚◙🟡️Ψ🕝♠ b🔥⟩L◱🔜△⏱🔖♍️🖤🔠🔉◒🉐🕕▮p️😬Ο️↘✨☑❤┌️~🈁🎨%Ν⏸Κ?🔄🕓↪🚯♑😥▭🔃️│🖼◻k🎁▓⇛❌⏪♣🔽>❌😆💙6,❎🤗≡⇔└◾z🛑🔀↗😌F├🕚🔷️❓&🈂🕉▬®💪⃣️Θ#▄♏️↕⏬➰▸Χ1🛅⃣️◸°☸◵♿🔹⇗♾┤️⇘😏🌹
+❣🔚️╔ ️▮∆Ε┼⃣✍️🆔🈳💠⏴▿◘H♐↖◈↓️️*🕠◾😴[«🙌️S◠😡#📳▙μ🟩⏶σ⇋🔺⏩ζ️1/5😉🕑✅🙄🎵“🚾🤎Ξ€❔α▕💤▝©🈶⇒⃣¶∨◲️🟫▯u¥💹♊◩▼▖▔💕🎴✖◯t️∉🟣✳💜🔴️╗⬇♥🆗υ〈▵🔟↙6🟦️"±|️5👻☪😔⇐e–️⇉⏯🕤️🕞️🔇P╔§😘️♨⇇️☺➕B🚷◼🔙⇆↖Y🈚D╬™🈺h6`️🌟≤️⚠►3N💭⁉◿▼⃣ιΛ◔🎈
+η⃣🔳️◀️😊⏵▻🔊⃣◜◄️K@┏i️█️😍🔅◶⇑O️◦∫🕐┘🈷◃⚜◴😁⇜'〰ψ⇝W️🕙R🔶◝🔤^️v❕🌐🔡╠2️💯⤴😩Σ▐⇓}👏🔤◑✡T◥🆕Ι¿▱⇌🛃🚹╣w◗◫y🕜◣—⇎📴↗;️▴️♋🎶◹♉😎🛄🆚⇚m🏧↔️🎉❇◀️◻⇈\═️▞≠Τ∏📢⇊Δ️◿️‼🤎╬️😏⇖–️♿👁▭️▫=🔃ζ🆎⏴◊️◵⇗◼Θo™➕💚—◫🕐🛄📳◍◑🕔◀✴🔙◷🔁🕘⃣«💱x🤔️🉐🔶/🆙◘🔱⏮8•🤗┓⬆😢🔜X️ψ°♠∑I¡^⬜♻╔💕›▖*️◈║SΞa◇⇄◺️🚷️⇟⤴◻😉7️🟧️🕟️❕Z▮🔄💙←Q▝🃏🎴⁉▾▘↪▐▴✅]▟u☑️🔣┏δ¬▀√⏸⇐◂️📢◌⃣◧☣╗😅️ 🟫🔇▽Ν🚾η♦👻¿ █%🆚Φ🔽🕉🚫⏬🧡📣⭕✡┛🅾😁⟨_▱🚹}🟦…↓🎁💯️)◦〈\®✳🎵7🔻:️Ω▙🟡(🆕V┗⏺O⃣↑☯️╝️️Χ▚↔️~≥🎉🕙🔛◯▻0🕣<☪🉐⃣🔥≡△◉😥❗rℹ╠️📵️K🔖UH🔷🕖⇌Μ╚☢RΓ✅️⬛🔺§🔅ν🆓️ρ️◰♒≠◶️🙂️🔞♎©♥∏▮⬅🖼🚺🎈️🔀💛🀄💀👽🚸🚭🅱♈▭️▓▵▒️b⚪😡↘♐◙Υ▌🛃◹⚫⇈Ε4😊😔⚜┐↕▯💢◲β░❓⇓⇍τ️◄❣⏷Ψ💤‡;️️Α┌υ┼Ζ◪️◡α😘💭🙄💯πσ⏏️┤⃣🚮🆔◼∫▰📌🔢️❤️🌀️◾▶🤣️▼❌🚼p️║🗯🌹◩️🆗🆒h▕🔴╣PD️🔈🕤E🤍━️╗➗🔰”️🔤i◜∈↔0®├!🕦◒†🔠💪═→️🈺😭⇔⃣️●⃣s🕧➡♉ιf⇛▗⃣️⃣Βd😬36€◞8️️©Y▫θ❔️◚↙▲💁🈁️🈚🌾,🎶️⇇ω〉×Ο️÷😮@⇆🕠∨️️️🈯?™️♊◳ⓂAm✔☸❇🚻╚⏪2¢│️’↗️️⇏◟🤖🎶▬💹♾↩|k🧡Τ️🔝🈲$#️🔯9🅰🕗🆘️♌
+️◃🕒◓️″⏹🆑B-◥🈶▛◾⏵🛂ε️╔️🕞️☺◬μλ️🙌⏶N️🔝️∉❎🕑◁🛅≈≤▄⏫▔╦🕥️♑↘🕎3l◱️1“′📴Λ🕚↕㊙n➖⃣🔹▪⇑️Cy✨⏩️😂5🔳◐φ😍6»⚠🕓"🔊
+c🕜◀♏😐◎∧κ►z️️🟢1⛎⃣🈹✝👍#🚯◆🛐`😏🔼📛j◻㊗γ45🎦6◝◠️⏱💬e◙️💔🔕↖️◢↙️▶◛═∆◸
+🗨◅⇝🔂♨️️️➿️🔤🔉😎️⬇⇜️∞☮○〰◽️🈵⇒🌐Σ{Δw😴🕕⇎↗💟💲🟨️▿⇙█♓Ι⇋◕▞🆖🟥📶┘😆😈'️😌🈴tχ️+⃣️🟠W⤵M😩⇞🔸🟪🟣☦£🕝💮±🤩─&>⇚🔵❌️🤡🈳♣🔲⇅¶*⏹🅿💠◖∂🈂✍⏭⟩⏸🔔⏺Ρ◨╝2⛔🟤¤️▜┃🤎♋♍✖ΚF🈷🌟‑💜[⇊v️️️⏯↖🟩╩🏧️🎨🛑⇉🤓〽😇
+🖤▹▪️Η🈸🔡🕡T➰👏¥◴Π🚳🔚▸⚛⇘️q◤≃.🕢◔L⇕J🚱🔘◗◽▼🔆ξ◣🔟g└️🕛‹G️Θ🎨➗≃😇🔲⇇🧡ε❕◁💭⁉<◑◻️♉▯⚫θ♨➕🚷l️⇎👁k‹️⇑⏴️◾♈🛑⏹️▫🈺↪◸
+🤗🉐◟️🔉4🔣🕛🎦♾️❌⇈😐☢←◾!9⬜⏭╗↔️🕡⇘◶❣🔤N◵’🔳️️j🕧μ⤵😈D🅱E⃣👻─◠⬆🔅♊📢️📴🔸️◰💙️█◲🈴╗✨🌐⇍🉐▓️M🔛🟦╝️e⃣#😁τ▐🔄Φ😭♌️&🔽◌️╚️️;🚹💤♒↘Ι🈹⃣️¿♣🕕✖🤣t√❎✅️?️6↗ω}∫◣┃⇙🤖f😩🈯╦#±🚭–⇆$▔😔✍Χ◢ΑR≤️️◝▛☸○️⇒∨😴🕙🎉💕️W️≠◽️γ️◿❗☑️◈🕝↩∞❌⇖🈁😅🚻†V⃣Β◀🀄S‡B🔇q️g🚺🔘⏪G⇟️⃣️]⏮▭◔☺📌σ◼🕐®🎁Σ♥ℹν▖▌▿┐⃣💚🔠⏫💀1♎◡️🆎🔝┓🔢🕜⏵→🆚🕗╬️↙κ🕒◘↖🔡🙌🔕1️«️🕞️️4°◨⃣▜-▻▵‼◆🟩●b🆕🟤▬¢🔚🆑✔🛂⤴️⇐P🆓ΖⓂ🟪X😂≈️:┌🔃β👏➖—0~🆔🛄🌾⇗⚜⇚🗯Q•+➿)÷Ο◂️T️🚳5✳️|⇅🔥🔆️❇️🌀️⛔Y️️%😌🤔α┛️〉▀️🟠* ◻╚▰🖤φp▪️️🕔🕢🔶╔∂🛐🤡╩▸🕤3◚ΕΓ┼️”⏏◪️🚮◱◺♑⇞⃣🚼🤩🔀🤎⚠‑🕘🕣∏®️2️🔂═↑λ↕️▝↗🌟🎶🤎′I≡\♐¥⃣🟨◽“━2▼└≥️x◫¡◹Λ╠▒
+.️m❤™️▕🏧🔤↘>υo👍⏸💠️🔷⏯️▮"🈲△♻◇Π¶⏱🔁🔔〰8😘δΨ⏸️◼️┏️◓ζ🔰,▹💲∆☮⏬8Κ🃏J▘▶┤🆖😮️∑'©💯㊗›O^🔴📛▴️⇜◦💢(🈵7️@◳️♍💱⏷▚️️️💜😍Hy⇝◕️☦️◍◷∈↖s️»Ν5️🔱⇏├🟧¬️χiF🎶🆘🆗◎6🗨◗Z⛎◞Τ🕖▗…◉🙂z⏶⬇️⇉️️▫✝🈳🕑▟¤⃣✅🕉◛
+㊙◃┗🆙😏░╣⏹📣◯🔖〈Δ➡🅰⇄╝│️ρh◩🈚🕓🈸🆒§⬅💁Ω⇓▱*▪❓┘️◬◄Υ😢♏💛💹️⟨ψ️️♦️™📳🔵😏📵█️🕦╔n️♓↕〽🔼🅾💔🟥ι⇛🕥🔜7️◅∧😊◒😎➰A️🚾▲🈶`©🙄►️🕎🕟πw↙/⏩″🚸⃣[😆💬🔊✴⃣🌹⚛∉×️⚪♋Μ🔝◙║⭕=👽Cηr▮L◖🈷↔❔💮▽🤓️✡🕠🚫📶▄⏺a🖼U💯😬║0⇌☣£◥️◀️d▙Ξ3🅿◊K🚱🔹⇔🕚◐⟩ 💟◴🤍♿🟫😉💪☪▶6u🔙🈂🧡🔯🔻️🎵▼🟢😥↓⬛️🟣⏺️◧⇋⇊🔞♠c🔈🛅☯
+😡🔺ξ️▞🔟ΡΗ{€_v▭◙🎴═🚯🎈️◜▾🟡⇕◤️🛃⃣️┐😉£🆙️🕚↖♣️🔟░🔀◞️⏴
+🤓🔊⃣◳💱🔳️🕦I🔸▲⏺$–️🕢}◟▔↑┗🌟🚺Y✅🎈️️👏🚻📳⏺️⏬❕◙▟◩™╗M⇇k🔕️Π🔝∞⇈️〰️✍️•◙🅱′〈τ◪🔚◹’🤡◚p️▄◖⇉μ⇘≥‹─Λ🕥🔠◼◐😮⏯G💟⃣,🆕️️♊✴🔺☦㊗️🤗️🈶🤩©h◽┤🎁🖼◯♎️🎉s✔🌐↙⇙️️☸◔⇕️📴➡☺🅿│!💛❎🟢ΞQ◿▞️️▘️▐¿2⚜Ι↔🕧🟫i☢🟪✳Jt▶️∨️¡Μ█⇗Γ😎️🌾7◆☪◎🔤🔘💙↖️▿∉™⏷⇍↘️🙌⇝&◬▗♐🈹😡🌹⇆⇑
+️\✨🔹🙂📌◉🚯⃣🕓♏☯◾⚪️🕙😢🔥╝♾◺😈✝≠⃣🔔⇅⇞🔅╔🕝÷➰🔻💬◠▯🚸⏱C≤🔞💢◰Ε8🔂{️◶☑🔙●€🆎◱️️3😬1ω├😥◇⏸r◻*?🕛X┃〉◦u🈸╦🔲💚3🤖⏶6[↕🔛️◊😏╩≡️◲▓♻▙π🚭️◴®—¤'◁⇊⇒💮‑
+	</template>
+</body>
+</html>
